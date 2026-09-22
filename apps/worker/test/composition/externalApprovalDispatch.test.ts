@@ -22,6 +22,10 @@ import {
   createExternalApprovalDispatch,
   resolveExternalApprovalDispatch,
   externalApprovalFailureToHealth,
+  createExternalApprovalSender,
+  checkSavedAction,
+  sendStateOf,
+  DISPATCHABLE,
   type ExternalApprovalDispatchDeps,
   type ExternalApprovalFailure,
 } from "../../src/composition/externalApprovalDispatch";
@@ -301,8 +305,10 @@ describe("dispatchExternalApproval — refuses WITHOUT writing when anything doe
     const v = vendor();
     const b = await backends(v.transport);
     const card = await handMade(b, String(WS), "mine", "someone-elses-key");
-    expect(await dispatchExternalApproval(card, depsFor(b))).toEqual({ kind: "refused", reason: "no_saved_action" });
+    const failures: ExternalApprovalFailure[] = [];
+    expect(await dispatchExternalApproval(card, depsFor(b, failures))).toEqual({ kind: "refused", reason: "not_this_cards_action" });
     expect(v.calls).toHaveLength(0);
+    expect(failures.map((f) => f.kind)).toEqual(["integrity"]); // not "nothing saved": something IS saved, and it is not this card's
   });
 });
 
@@ -445,7 +451,7 @@ describe("createExternalApprovalDispatch — the port the Approvals screen calls
   it("returns ok for every outcome: the decision already landed, and the card shows the real state", async () => {
     const v = vendor("rejected");
     const b = await backends(v.transport);
-    const port = createExternalApprovalDispatch(depsFor(b));
+    const port = createExternalApprovalDispatch(createExternalApprovalSender(depsFor(b)));
     const approval = await proposeAndApprove(b, "port");
     expect(await port(approval)).toEqual({ ok: true, value: undefined });
     expect(await port({ ...approval, payloadHash: "hash:x" })).toEqual({ ok: true, value: undefined });
@@ -481,5 +487,86 @@ describe("externalApprovalFailureToHealth — what System Health shows (rule 7: 
     const off = externalApprovalFailureToHealth({ kind: "not_sent", approvalId: "idem_x", reason: "writes_off" }, at);
     expect(off.failureClass).toBe("write_through_failed");
     expect(off.message).toBe("approved external write not sent: writes_off");
+  });
+});
+
+// Linear slice 3+4, step 4a — ONE check and ONE state for the dispatcher, the details view and "Send now", so the
+// screen can never say "ready" about a card the dispatcher would refuse, or the reverse.
+describe("sendStateOf / checkSavedAction — one state, shared by the dispatcher and the screen", () => {
+  it("⛔ the dispatcher sends EXACTLY when the state is dispatchable, over every entry status × armed", async () => {
+    for (const armed of [true, false]) {
+      for (const status of ["proposed", "retry_queued", "receipt_recorded", "rejected", "expired"] as const) {
+        const v = vendor();
+        const b = await assembleBackends(
+          {
+            now: () => NOW,
+            allowedLocalEndpoints: [LOCAL_ENDPOINT],
+            ...(armed ? { writeTransport: { enabled: true, make: () => v.transport } } : {}),
+          },
+          { candidateOutput: {} },
+        );
+        open.push(b);
+        await b.repos.workspaceConfig.upsert(
+          defaultWorkspace({ id: WS, name: "ws", type: "employer_work", markdownRepoPath: "/tmp/ws", gbrainBrainId: "ws" }),
+        );
+        const card = await proposeAndApprove(b, `grid-${status}`);
+        const entry = await entryFor(b, `grid-${status}`);
+        await b.repos.outbox.update({ ...entry, status });
+        const check = await checkSavedAction(card, depsFor(b));
+        const st = sendStateOf(card, check, b.armedFor);
+        if (st === "store_fault") throw new Error("unexpected store fault");
+        await dispatchExternalApproval(card, depsFor(b));
+        const sent = v.calls.some((c) => c.op === "create");
+        expect(sent, `armed=${armed} status=${status} state=${st.state}`).toBe(DISPATCHABLE.has(st.state));
+      }
+    }
+  });
+
+  it("⛔ only 'ready' and 'held' ever send — the grid above proves AGREEMENT, this pins WHICH states", () => {
+    expect([...DISPATCHABLE].sort()).toEqual(["held", "ready"]);
+  });
+
+  it("maps each case to its state", async () => {
+    const b = await backends(vendor().transport);
+    const card = await proposeAndApprove(b, "states");
+    const check = await checkSavedAction(card, depsFor(b));
+    const state = (a: Approval) => {
+      const st = sendStateOf(a, check, b.armedFor);
+      return st === "store_fault" ? st : st.state;
+    };
+    expect(state(card)).toBe("ready");
+    expect(state({ ...card, status: "pending" })).toBe("awaiting_approval");
+    expect(state({ ...card, status: "deferred" })).toBe("awaiting_approval");
+    expect(state({ ...card, status: "rejected" })).toBe("not_approved");
+    expect(state({ ...card, status: "edited" })).toBe("not_approved");
+    expect(sendStateOf(card, check, () => false)).toEqual({ state: "writes_off" });
+    expect(sendStateOf(card, { kind: "no_saved_action" }, b.armedFor)).toEqual({ state: "no_send_record" });
+    expect(sendStateOf(card, { kind: "refused", reason: "payload_mismatch" }, b.armedFor)).toEqual({ state: "refused", refusal: "payload_mismatch" });
+    expect(sendStateOf(card, { kind: "store_fault" }, b.armedFor)).toBe("store_fault");
+  });
+
+  it("a saved-action store fault is NOT reported as 'nothing saved': checkSavedAction says store_fault and nothing is sent", async () => {
+    const v = vendor();
+    const b = await backends(v.transport);
+    const card = await proposeAndApprove(b, "fault");
+    const faulty = { ...depsFor(b), outbox: { ...b.repos.outbox, get: async () => ({ ok: false as const, error: { code: "unavailable" as const, message: "db busy" } }) } };
+    expect(await checkSavedAction(card, faulty)).toEqual({ kind: "store_fault" });
+    expect(await dispatchExternalApproval(card, faulty)).toEqual({ kind: "refused", reason: "store_unavailable" });
+    expect(v.calls).toHaveLength(0);
+  });
+});
+
+describe("createExternalApprovalSender — single-flight per approval (rule 3)", () => {
+  it("⛔ two concurrent sends of the same approval make ONE probe and ONE create", async () => {
+    const v = vendor();
+    const b = await backends(v.transport);
+    const card = await proposeAndApprove(b, "flight");
+    const send = createExternalApprovalSender(depsFor(b));
+    const [a, c] = await Promise.all([send(card), send(card)]);
+    expect(a).toEqual({ kind: "dispatched", status: "created" });
+    expect(c).toEqual(a); // the second caller shares the first call's result
+    expect(v.calls.filter((x) => x.op === "query")).toHaveLength(1);
+    expect(v.calls.filter((x) => x.op === "create")).toHaveLength(1);
+    expect(await send(card)).toEqual({ kind: "already_done" }); // and after it settles, a new call re-checks
   });
 });

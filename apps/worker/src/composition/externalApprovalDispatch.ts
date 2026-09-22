@@ -35,8 +35,9 @@ import {
   type Result,
   type TargetSystem,
 } from "@sow/contracts";
+import type { ApprovalSendRefusal, ApprovalSendState } from "@sow/contracts/api/ui-safe";
 import { approvalIdFor, approvalOutboxId } from "@sow/domain";
-import type { OutboxRepository, WorkspaceConfigRepository } from "@sow/db";
+import type { OutboxEntry, OutboxRepository, WorkspaceConfigRepository } from "@sow/db";
 import { UNASSIGNED_WORKSPACE } from "@sow/db/schema/approvals";
 import {
   applyOutcome,
@@ -57,12 +58,11 @@ import type { HealthFailure } from "../health/surface";
 
 /** Why a write was refused before the gateway. Closed and content-free (rule 7). */
 export type ExternalApprovalRefusal =
+  | ApprovalSendRefusal // the integrity reasons the screen can show
   | "writes_off"
-  | "unassigned_workspace"
-  | "unknown_workspace"
   | "no_saved_action"
-  | "workspace_mismatch"
-  | "payload_mismatch";
+  | "store_unavailable" // the saved action could not be read — NOT the same as "nothing saved"
+  | "unknown_status"; // a saved-action status this version does not recognise
 
 export type ExternalApprovalOutcome =
   | { readonly kind: "skipped"; readonly reason: "not_external" | "not_approved" }
@@ -105,6 +105,68 @@ export interface ExternalApprovalDispatchDeps {
 
 const TERMINAL = new Set(["receipt_recorded", "rejected", "expired"]);
 
+/** What `checkSavedAction` found: the card's own saved action, an integrity refusal, nothing, or a store fault. */
+export type SavedActionCheck =
+  | { readonly kind: "verified"; readonly entry: OutboxEntry }
+  | { readonly kind: "refused"; readonly reason: ApprovalSendRefusal }
+  | { readonly kind: "no_saved_action" }
+  | { readonly kind: "store_fault" };
+
+/**
+ * Find the action + envelope saved with THIS card and prove it is this card's: same workspace (rule 4), its replay
+ * key + workspace derive this card's id, and the same payload (rule 3). The ONE check the dispatcher, the details
+ * view and "Send now" share. A store fault is `store_fault`, never "nothing saved".
+ */
+export async function checkSavedAction(
+  approval: Approval,
+  deps: Pick<ExternalApprovalDispatchDeps, "outbox" | "workspaceConfig">,
+): Promise<SavedActionCheck> {
+  const ws = String(approval.workspaceId);
+  if (ws === UNASSIGNED_WORKSPACE) return { kind: "refused", reason: "unassigned_workspace" };
+  const onboarded = await deps.workspaceConfig.get(approval.workspaceId);
+  if (!onboarded.ok) {
+    return onboarded.error.code === "not_found" ? { kind: "refused", reason: "unknown_workspace" } : { kind: "store_fault" };
+  }
+  const saved = await deps.outbox.get(approvalOutboxId(approval.id));
+  if (!saved.ok) return saved.error.code === "not_found" ? { kind: "no_saved_action" } : { kind: "store_fault" };
+  const entry = saved.value;
+  if (entry.workspaceId !== ws) return { kind: "refused", reason: "workspace_mismatch" };
+  if (String(approvalIdFor({ idempotencyKey: entry.idempotencyKey, workspace: entry.workspaceId })) !== String(approval.id)) {
+    return { kind: "refused", reason: "not_this_cards_action" };
+  }
+  if (entry.payloadHash !== approval.payloadHash) return { kind: "refused", reason: "payload_mismatch" };
+  return { kind: "verified", entry };
+}
+
+/** The states in which a write is actually attempted. Everything else refuses or reports. */
+export const DISPATCHABLE: ReadonlySet<ApprovalSendState> = new Set<ApprovalSendState>(["ready", "held"]);
+
+/**
+ * The card's send state, from the card, its saved-action check, and whether its system has a real sender in its
+ * workspace. PURE. Order: integrity refusal → nothing saved → a finished entry (sent / rejected / expired) → the
+ * card's own state → writes off → the entry's retry state. `store_fault` is returned as-is so a caller can fail
+ * the request instead of showing a false state.
+ */
+export function sendStateOf(
+  approval: Approval,
+  check: SavedActionCheck,
+  armedFor: (targetSystem: TargetSystem, workspaceId: string) => boolean,
+): { readonly state: ApprovalSendState; readonly refusal?: ApprovalSendRefusal } | "store_fault" {
+  if (check.kind === "store_fault") return "store_fault";
+  if (check.kind === "refused") return { state: "refused", refusal: check.reason };
+  if (check.kind === "no_saved_action") return { state: "no_send_record" };
+  const entry = check.entry;
+  if (entry.status === "receipt_recorded") return { state: "sent" };
+  if (entry.status === "rejected") return { state: "rejected" };
+  if (entry.status === "expired") return { state: "expired" };
+  if (approval.status === "pending" || approval.status === "deferred") return { state: "awaiting_approval" };
+  if (approval.status !== "approved") return { state: "not_approved" };
+  if (!armedFor(entry.targetSystem as TargetSystem, entry.workspaceId)) return { state: "writes_off" };
+  if (entry.status === "proposed") return { state: "ready" };
+  if (entry.status === "retry_queued") return { state: "held" };
+  return { state: "unknown" };
+}
+
 /**
  * Send the write an approved `external_action` card stands for, or refuse without writing. TOTAL: never throws.
  * The repositories return typed Results; an unexpected throw anywhere (a repository, the gateway, the outcome
@@ -140,22 +202,27 @@ async function decideAndSend(approval: Approval, deps: ExternalApprovalDispatchD
   if (approval.status !== "approved") return { kind: "skipped", reason: "not_approved" };
 
   const ws = String(approval.workspaceId);
-  if (ws === UNASSIGNED_WORKSPACE) return { kind: "refused", reason: "unassigned_workspace" };
-  const onboarded = await deps.workspaceConfig.get(approval.workspaceId);
-  if (!onboarded.ok) return { kind: "refused", reason: "unknown_workspace" };
-
-  const saved = await deps.outbox.get(approvalOutboxId(approval.id));
-  if (!saved.ok) return { kind: "refused", reason: "no_saved_action" };
-  const entry = saved.value;
-  if (entry.workspaceId !== ws) return { kind: "refused", reason: "workspace_mismatch" };
-  // The saved entry must be THIS card's: its replay key + workspace derive this card's id.
-  if (String(approvalIdFor({ idempotencyKey: entry.idempotencyKey, workspace: entry.workspaceId })) !== String(approval.id)) {
-    return { kind: "refused", reason: "no_saved_action" };
+  const check = await checkSavedAction(approval, deps);
+  const st = sendStateOf(approval, check, deps.armedFor);
+  if (st === "store_fault") return { kind: "refused", reason: "store_unavailable" };
+  if (!DISPATCHABLE.has(st.state)) {
+    switch (st.state) {
+      case "refused":
+        return { kind: "refused", reason: st.refusal ?? "not_this_cards_action" };
+      case "no_send_record":
+        return { kind: "refused", reason: "no_saved_action" };
+      case "writes_off":
+        return { kind: "refused", reason: "writes_off" };
+      case "sent":
+      case "rejected":
+      case "expired":
+        return { kind: "already_done" };
+      default:
+        return { kind: "refused", reason: "unknown_status" };
+    }
   }
-  if (entry.payloadHash !== approval.payloadHash) return { kind: "refused", reason: "payload_mismatch" };
-  if (TERMINAL.has(entry.status)) return { kind: "already_done" };
-
-  if (!deps.armedFor(entry.targetSystem as TargetSystem, entry.workspaceId)) return { kind: "refused", reason: "writes_off" };
+  if (check.kind !== "verified") return { kind: "refused", reason: "no_saved_action" }; // unreachable: DISPATCHABLE implies verified
+  const entry = check.entry;
 
   const env = rebuildEnvelope(entry);
   const action = rebuildAction(entry);
@@ -210,12 +277,33 @@ function failureOf(outcome: ExternalApprovalOutcome, approvalId: string): Extern
     return undefined;
   }
   if (outcome.kind === "refused") {
-    if (outcome.reason === "workspace_mismatch" || outcome.reason === "payload_mismatch") {
+    if (outcome.reason === "workspace_mismatch" || outcome.reason === "payload_mismatch" || outcome.reason === "not_this_cards_action") {
       return { kind: "integrity", approvalId, reason: outcome.reason };
     }
     return { kind: "not_sent", approvalId, reason: outcome.reason };
   }
   return undefined;
+}
+
+/** Sends one approval's write (or refuses). Built once at boot and shared by the decide command and "Send now". */
+export type ExternalApprovalSender = (approval: Approval) => Promise<ExternalApprovalOutcome>;
+
+/**
+ * The shared sender: {@link dispatchExternalApproval}, SINGLE-FLIGHT per approval id (rule 3). A second call for an
+ * approval whose send is still running gets THAT call's result instead of starting another — so two "Send now"
+ * clicks, or a decide and a "Send now" together, make one existence probe and at most one create. After the first
+ * settles, a new call re-checks from scratch (and finds the card already sent).
+ */
+export function createExternalApprovalSender(deps: ExternalApprovalDispatchDeps): ExternalApprovalSender {
+  const inflight = new Map<string, Promise<ExternalApprovalOutcome>>();
+  return (approval: Approval): Promise<ExternalApprovalOutcome> => {
+    const key = String(approval.id);
+    const running = inflight.get(key);
+    if (running !== undefined) return running;
+    const started = dispatchExternalApproval(approval, deps).finally(() => inflight.delete(key));
+    inflight.set(key, started);
+    return started;
+  };
 }
 
 /**
@@ -224,9 +312,9 @@ function failureOf(outcome: ExternalApprovalOutcome, approvalId: string): Extern
  * again" about a decision that DID land, and that retry cannot re-dispatch. What happened to the write is on
  * the saved entry (and in System Health via `onFailure`).
  */
-export function createExternalApprovalDispatch(deps: ExternalApprovalDispatchDeps): DispatchApprovalFn {
+export function createExternalApprovalDispatch(send: ExternalApprovalSender): DispatchApprovalFn {
   return async (approval: Approval): Promise<Result<void, FailureVariant>> => {
-    await dispatchExternalApproval(approval, deps); // total: never throws
+    await send(approval); // total: never throws
     return ok(undefined);
   };
 }

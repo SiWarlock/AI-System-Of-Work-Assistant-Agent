@@ -12,9 +12,9 @@ import { join } from "node:path";
 const BOOT = readFileSync(join(__dirname, "..", "..", "src", "boot.ts"), "utf8");
 
 function bindingBlock(): string {
-  const start = BOOT.indexOf("createExternalApprovalDispatch({");
+  const start = BOOT.indexOf("createExternalApprovalSender({");
   expect(start).toBeGreaterThan(-1); // positive control: the binding exists
-  return BOOT.slice(start, BOOT.indexOf("\n    }),", start));
+  return BOOT.slice(start, BOOT.indexOf("\n  });", start));
 }
 
 describe("bootWorker's external-approval dispatch binding", () => {
@@ -41,6 +41,10 @@ describe("bootWorker's external-approval dispatch binding", () => {
     // "refuse AND say so" would have gone silent in production.
     expect(bindingBlock()).toContain("await approvalDispatchHealth.record(externalApprovalFailureToHealth(f, backends.now()));");
     expect(BOOT).toContain("const approvalDispatchHealth: HealthSurface = createHealthSurface(");
+  });
+
+  it("the decide command's port wraps that ONE shared sender", () => {
+    expect(BOOT).toContain("createExternalApprovalDispatch(externalApprovalSender)");
   });
 
   it("is used in BOTH routing arms (with and without the proof-spine path)", () => {

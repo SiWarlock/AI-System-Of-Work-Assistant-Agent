@@ -211,8 +211,10 @@ import { createHealthSurface, type HealthSurface, type HealthFailure } from "./h
 import { createPersistentHealthSurfaceStore } from "./composition/store-adapters";
 import {
   createExternalApprovalDispatch,
+  createExternalApprovalSender,
   resolveExternalApprovalDispatch,
   externalApprovalFailureToHealth,
+  type ExternalApprovalSender,
 } from "./composition/externalApprovalDispatch";
 import { provisionDevWorkspace, type DevProvisionSpec } from "./composition/provisionDev";
 import { maybeSeedDemoData } from "./composition/demoSeed";
@@ -4083,22 +4085,25 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   const approvalDispatchHealth: HealthSurface = createHealthSurface(
     createPersistentHealthSurfaceStore(backends.healthItems),
   );
+  // ONE sender for the whole worker, single-flight per approval: the decide command's port below and the
+  // Approvals screen's "Send now" (step 4d) share it, so they can never race each other into two sends.
+  const externalApprovalSender: ExternalApprovalSender = createExternalApprovalSender({
+    armedFor: backends.armedFor,
+    outbox: backends.repos.outbox,
+    workspaceConfig: backends.repos.workspaceConfig,
+    receiptStore: backends.receiptStore,
+    writeAdapters: backends.writeAdapters,
+    audit: async (rec): Promise<void> => {
+      await backends.repos.audit.append(rec);
+    },
+    clock: backends.now,
+    ...(keychainSecrets !== undefined ? { secrets: toWriteSecretsAccessor(keychainSecrets.getSecret) } : {}),
+    onFailure: async (f): Promise<void> => {
+      await approvalDispatchHealth.record(externalApprovalFailureToHealth(f, backends.now()));
+    },
+  });
   const externalApprovalDispatch: DispatchApprovalFn = resolveExternalApprovalDispatch(config.dispatchApproval, () =>
-    createExternalApprovalDispatch({
-      armedFor: backends.armedFor,
-      outbox: backends.repos.outbox,
-      workspaceConfig: backends.repos.workspaceConfig,
-      receiptStore: backends.receiptStore,
-      writeAdapters: backends.writeAdapters,
-      audit: async (rec): Promise<void> => {
-        await backends.repos.audit.append(rec);
-      },
-      clock: backends.now,
-      ...(keychainSecrets !== undefined ? { secrets: toWriteSecretsAccessor(keychainSecrets.getSecret) } : {}),
-      onFailure: async (f): Promise<void> => {
-        await approvalDispatchHealth.record(externalApprovalFailureToHealth(f, backends.now()));
-      },
-    }),
+    createExternalApprovalDispatch(externalApprovalSender),
   );
   const dispatchApproval: DispatchApprovalFn =
     proofSpineParams !== undefined
