@@ -105,7 +105,8 @@ describe("loadAllowlistedDotenv — allowlisted .env → hydrate plan", () => {
   });
 
   it("exposes the recognized SOW_* allowlist (single source, in sync with main/worker-host reads)", () => {
-    // The 10 keys the main + worker-host process.env reads recognize.
+    // The 11 keys the main + worker-host process.env reads recognize. SOW_LINEAR_WRITES added
+    // 2026-09-21 (Linear slice 2): the owner switch for real Linear writes, off unless set.
     expect(RECOGNIZED_SOW_ENV_KEYS).toStrictEqual([
       "SOW_MANAGE_TEMPORAL",
       "SOW_TEMPORAL_ADDRESS",
@@ -117,6 +118,7 @@ describe("loadAllowlistedDotenv — allowlisted .env → hydrate plan", () => {
       "SOW_SUBSCRIPTION_MODEL",
       "SOW_EGRESS_ALLOWED_PROCESSORS",
       "SOW_SUBSCRIPTION_REACHABILITY_LIVE",
+      "SOW_LINEAR_WRITES",
     ]);
     // No shadowing/secret key is on the allowlist (structural exclusion).
     for (const k of ["ANTHROPIC_API_KEY", "HTTP_PROXY", "VOYAGE_API_KEY", "OPENROUTER_API_KEY"]) {

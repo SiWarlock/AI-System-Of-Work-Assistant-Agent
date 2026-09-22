@@ -31,6 +31,9 @@ export interface WorkerHostConfig {
    *  to bootWorker's `gbrainStartupVerify.pinPath`. Default absent ⇒ the startup verify never runs (today's
    *  degraded boot, byte-equivalent). Mirrors worker-host/index.ts. */
   readonly gbrainPinPath?: string;
+  /** The owner switch for REAL Linear writes (plain data; the worker host builds the transport). Default
+   *  absent ⇒ off. Mirrors worker-host/index.ts. */
+  readonly linearWrites?: { readonly enabled?: boolean };
 }
 
 /** The minimal child-process surface the supervisor drives (a real fork or a fake). */

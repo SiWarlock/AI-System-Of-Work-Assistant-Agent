@@ -16,6 +16,13 @@ export interface WorkerArmingConfig {
   readonly subscriptionArm?: { readonly enabled: boolean; readonly model?: string };
   /** §5 egress-processor allowlist forwarded into the auto-ingest proof-spine EgressPolicy (18.31). */
   readonly egressAllowedProcessors?: readonly string[];
+  /**
+   * The owner switch for REAL Linear writes (Linear slice 2). PLAIN DATA only — the worker host builds
+   * the actual transport factory, because a function cannot cross the fork IPC channel (desktop L14).
+   * Absent ⇒ off and byte-equivalent. ⚠ Turning it on still creates no Linear issue by itself: nothing
+   * proposes one yet, and Approvals-screen dispatch is a no-op until slice 3.
+   */
+  readonly linearWrites?: { readonly enabled: boolean };
 }
 
 /** Strict opt-in: only the exact tokens arm — never a truthy-coerce (mirrors SOW_INGEST_WATCH; worker Lesson 28). */
@@ -34,6 +41,7 @@ function isArmed(raw: string | undefined): boolean {
  */
 export function readWorkerArmingEnv(env: NodeJS.ProcessEnv): WorkerArmingConfig {
   const armRaw = env["SOW_SUBSCRIPTION_ARM"];
+  const linearRaw = env["SOW_LINEAR_WRITES"];
   const egressRaw = env["SOW_EGRESS_ALLOWED_PROCESSORS"];
 
   // model: trimmed + empty-guarded (mirrors the egress cleanup), so a whitespace/empty SOW_SUBSCRIPTION_MODEL
@@ -63,5 +71,6 @@ export function readWorkerArmingEnv(env: NodeJS.ProcessEnv): WorkerArmingConfig 
   return {
     ...(subscriptionArm !== undefined ? { subscriptionArm } : {}),
     ...(egressAllowedProcessors.length > 0 ? { egressAllowedProcessors } : {}),
+    ...(linearRaw !== undefined ? { linearWrites: { enabled: isArmed(linearRaw) } } : {}),
   };
 }

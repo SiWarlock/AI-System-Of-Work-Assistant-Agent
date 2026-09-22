@@ -6,6 +6,17 @@ import { readWorkerArmingEnv } from "../../main/worker-arming-env";
 // import reaches this test. These pin the env-parsing acceptance bullets; the worker-host-side forward
 // (config → bootWorker/gateAutoIngest) is pinned separately in arming-forward.test.ts.
 describe("readWorkerArmingEnv — main-side env → WorkerHostConfig arming slice", () => {
+  it('SOW_LINEAR_WRITES: strict ("1"/"true" only), plain data, and ABSENT when unset (Linear slice 2)', () => {
+    // The owner switch for real Linear writes. Absent ⇒ no key at all (byte-equivalent); any other
+    // value ⇒ explicitly disabled, never a truthy-coerce (worker L28).
+    expect("linearWrites" in readWorkerArmingEnv({})).toBe(false);
+    expect(readWorkerArmingEnv({ SOW_LINEAR_WRITES: "true" }).linearWrites).toStrictEqual({ enabled: true });
+    expect(readWorkerArmingEnv({ SOW_LINEAR_WRITES: "1" }).linearWrites).toStrictEqual({ enabled: true });
+    for (const v of ["TRUE", "yes", "on", "false", "0", " true"]) {
+      expect(readWorkerArmingEnv({ SOW_LINEAR_WRITES: v }).linearWrites, v).toStrictEqual({ enabled: false });
+    }
+  });
+
   it("omits the new keys entirely when no arming env is set (byte-equivalent dormancy)", () => {
     expect(readWorkerArmingEnv({})).toStrictEqual({});
     expect("subscriptionArm" in readWorkerArmingEnv({})).toBe(false);

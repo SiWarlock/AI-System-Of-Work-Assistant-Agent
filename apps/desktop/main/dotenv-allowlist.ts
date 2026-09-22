@@ -25,6 +25,8 @@ export const RECOGNIZED_SOW_ENV_KEYS: readonly string[] = [
   "SOW_SUBSCRIPTION_MODEL",
   "SOW_EGRESS_ALLOWED_PROCESSORS",
   "SOW_SUBSCRIPTION_REACHABILITY_LIVE",
+  // The owner switch for REAL Linear writes (Linear slice 2, 2026-09-21). Strict "1"/"true"; absent ⇒ off.
+  "SOW_LINEAR_WRITES",
 ];
 
 // The subscription-shadowing / egress-redirect env set, MIRRORED verbatim (same order, same section
