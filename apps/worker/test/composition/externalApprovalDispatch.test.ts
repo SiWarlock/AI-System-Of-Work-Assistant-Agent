@@ -103,7 +103,7 @@ async function proposeAndApprove(b: ProofSpineBackends, key: string, ws: Workspa
 
 function depsFor(b: ProofSpineBackends, failures: ExternalApprovalFailure[] = []): ExternalApprovalDispatchDeps {
   return {
-    armedTargets: b.armedTargets,
+    armedFor: b.armedFor,
     outbox: b.repos.outbox,
     workspaceConfig: b.repos.workspaceConfig,
     receiptStore: b.receiptStore,
@@ -309,7 +309,7 @@ describe("dispatchExternalApproval — refuses WITHOUT writing when anything doe
 describe("⛔ OWNER DECISION — writes OFF: approving sends nothing and fakes nothing", () => {
   it("with no real sender armed: refused as writes_off, NO receipt, the entry stays retryable", async () => {
     const b = await backends(); // no writeTransport ⇒ the stub would be selected for everything else
-    expect(b.armedTargets.size).toBe(0);
+    expect(b.armedFor("linear", String(WS))).toBe(false);
     const approval = await proposeAndApprove(b, "off");
     const out = await dispatchExternalApproval(approval, depsFor(b));
     expect(out).toEqual({ kind: "refused", reason: "writes_off" });
@@ -410,6 +410,34 @@ describe("⛔ OWNER DECISION, per system: only Linear has a real sender", () => 
     expect(out).toEqual({ kind: "refused", reason: "writes_off" });
     expect(v.calls).toHaveLength(0);
     expect((await entryFor(b, "todo")).status).toBe("proposed");
+  });
+});
+
+describe("⛔ OWNER DECISION, per workspace: a Linear key exists only for the workspaces that have one", () => {
+  it("a Linear card in a workspace WITHOUT a key is refused as writes_off and waits — never closed as rejected", async () => {
+    const v = vendor();
+    const b = await assembleBackends(
+      {
+        now: () => NOW,
+        allowedLocalEndpoints: [LOCAL_ENDPOINT],
+        writeTransport: { enabled: true, targets: ["linear"], workspaces: [String(WS)], make: () => v.transport },
+      },
+      { candidateOutput: {} },
+    );
+    open.push(b);
+    for (const id of [WS, OTHER_WS]) {
+      await b.repos.workspaceConfig.upsert(
+        defaultWorkspace({ id, name: String(id), type: id === WS ? "employer_work" : "personal_life", markdownRepoPath: `/tmp/${id}`, gbrainBrainId: String(id) }),
+      );
+    }
+    const card = await proposeAndApprove(b, "no-key", OTHER_WS);
+    expect(await dispatchExternalApproval(card, depsFor(b))).toEqual({ kind: "refused", reason: "writes_off" });
+    expect(v.calls).toHaveLength(0);
+    expect((await entryFor(b, "no-key")).status).toBe("proposed");
+    // Positive control, same setup: the card in the workspace that HAS a key is sent — so the refusal above is
+    // the workspace check, not "nothing is ever sent here".
+    const keyed = await proposeAndApprove(b, "has-key", WS);
+    expect(await dispatchExternalApproval(keyed, depsFor(b))).toEqual({ kind: "dispatched", status: "created" });
   });
 });
 

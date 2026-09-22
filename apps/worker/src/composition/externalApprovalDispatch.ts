@@ -13,8 +13,9 @@
 // never executes).
 //
 // ⛔ OWNER DECISION (2026-09-22): WRITES OFF ⇒ REFUSE, NEVER FAKE. With no real sender selected, the write
-// adapters sit over the in-memory stub, which fabricates success receipts. So when the card's OWN system has no
-// real sender (`armedTargets`) this refuses as `writes_off` BEFORE the gateway: no receipt, and the saved entry
+// adapters sit over the in-memory stub, which fabricates success receipts. So when the card's OWN system, in the
+// card's OWN workspace, has no real sender (`armedFor`) this refuses as `writes_off` BEFORE the gateway: no receipt,
+// and the saved entry
 // stays `proposed`, so a LATER dispatch can still send it once that system is armed. ⚠ Nothing in production makes
 // that later dispatch yet: the decide command dispatches only on a real transition, so an already-approved card is
 // not re-dispatched. The Approvals screen's "Send now" (step 4, not built yet) is what will.
@@ -84,11 +85,11 @@ export interface ExternalApprovalFailure {
 
 export interface ExternalApprovalDispatchDeps {
   /**
-   * The systems with a REAL sender (`backends.armedTargets`). A card for a system NOT in it is refused as
-   * `writes_off` and its saved entry is left untouched, so it can still be sent once that system is armed —
-   * never stubbed, and never closed as rejected by a router that does not serve it.
+   * Does the card's system, in the card's workspace, have a REAL sender that can authenticate
+   * (`backends.armedFor`)? `false` ⇒ refused as `writes_off`, saved entry untouched — never stubbed, and never
+   * closed as rejected by a router that does not serve the system or a key lookup that has no key there.
    */
-  readonly armedTargets: ReadonlySet<TargetSystem>;
+  readonly armedFor: (targetSystem: TargetSystem, workspaceId: string) => boolean;
   readonly outbox: OutboxRepository;
   readonly workspaceConfig: WorkspaceConfigRepository;
   readonly receiptStore: ReceiptStore;
@@ -154,7 +155,7 @@ async function decideAndSend(approval: Approval, deps: ExternalApprovalDispatchD
   if (entry.payloadHash !== approval.payloadHash) return { kind: "refused", reason: "payload_mismatch" };
   if (TERMINAL.has(entry.status)) return { kind: "already_done" };
 
-  if (!deps.armedTargets.has(entry.targetSystem as TargetSystem)) return { kind: "refused", reason: "writes_off" };
+  if (!deps.armedFor(entry.targetSystem as TargetSystem, entry.workspaceId)) return { kind: "refused", reason: "writes_off" };
 
   const env = rebuildEnvelope(entry);
   const action = rebuildAction(entry);

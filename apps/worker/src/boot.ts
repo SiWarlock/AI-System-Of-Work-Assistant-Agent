@@ -4085,7 +4085,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   );
   const externalApprovalDispatch: DispatchApprovalFn = resolveExternalApprovalDispatch(config.dispatchApproval, () =>
     createExternalApprovalDispatch({
-      armedTargets: backends.armedTargets,
+      armedFor: backends.armedFor,
       outbox: backends.repos.outbox,
       workspaceConfig: backends.repos.workspaceConfig,
       receiptStore: backends.receiptStore,

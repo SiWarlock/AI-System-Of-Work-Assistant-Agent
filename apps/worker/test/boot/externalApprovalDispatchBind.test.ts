@@ -18,10 +18,10 @@ function bindingBlock(): string {
 }
 
 describe("bootWorker's external-approval dispatch binding", () => {
-  it("arms per system from the backends — never a constant, never a single yes/no", () => {
+  it("arms per system AND workspace from the backends — never a constant, never a single yes/no", () => {
     const block = bindingBlock();
-    expect(block).toContain("armedTargets: backends.armedTargets,");
-    expect(block).not.toMatch(/armedTargets:\s*new Set/);
+    expect(block).toContain("armedFor: backends.armedFor,");
+    expect(block).not.toMatch(/armedFor:\s*\(/); // never an inline predicate such as () => true
   });
 
   it("sends through the backends' own registry, outbox and receipt store", () => {

@@ -167,9 +167,15 @@ export interface WriteTransportGate {
   /**
    * The systems this sender REALLY serves (Linear slice 3+4). The Linear gate declares `["linear"]`; its router
    * refuses every other system. Absent on an armed gate ⇒ every system (a test's fake sender serves them all).
-   * Read through {@link armedWriteTargets}, never directly.
+   * Read through {@link writeArmedFor}, never directly.
    */
   readonly targets?: readonly TargetSystem[];
+  /**
+   * The workspaces this sender can AUTHENTICATE for — the ones whose credential resolved at boot. The Linear gate
+   * declares them; a write for any other workspace would be refused by its credential lookup and closed as
+   * rejected, so it must wait instead. Absent on an armed gate ⇒ every workspace. Read through {@link writeArmedFor}.
+   */
+  readonly workspaces?: readonly string[];
 }
 
 /**
@@ -815,15 +821,21 @@ export function isWriteTransportArmed(gate?: WriteTransportGate): boolean {
   return gate?.enabled === true && typeof gate.make === "function";
 }
 
+/** Does this system, in this workspace, have a REAL sender that can authenticate? */
+export type ArmedFor = (targetSystem: TargetSystem, workspaceId: string) => boolean;
+
 /**
- * The systems that have a REAL sender: empty unless {@link isWriteTransportArmed}; then the gate's declared
- * `targets`, or every system when it declares none. A write for a system NOT in this set must refuse or wait —
- * never go out, because on that path it would be the stub or a terminal `target_not_armed` refusal (owner
- * decision 2026-09-22: refuse and stay retryable, never fake).
+ * The armed predicate: `false` unless {@link isWriteTransportArmed}; then limited to the gate's declared `targets`
+ * and `workspaces` (each: undeclared ⇒ no limit). A write for which this is `false` must refuse or wait — never
+ * go out, because it would reach the stub, a terminal `target_not_armed` refusal, or a terminal credential
+ * refusal (owner decision 2026-09-22: refuse and stay retryable, never fake).
  */
-export function armedWriteTargets(gate?: WriteTransportGate): ReadonlySet<TargetSystem> {
-  if (!isWriteTransportArmed(gate)) return new Set();
-  return new Set(gate?.targets ?? TargetSystemValues);
+export function writeArmedFor(gate?: WriteTransportGate): ArmedFor {
+  if (!isWriteTransportArmed(gate)) return () => false;
+  const targets = new Set<string>(gate?.targets ?? TargetSystemValues);
+  const workspaces = gate?.workspaces === undefined ? undefined : new Set(gate.workspaces);
+  return (targetSystem, workspaceId) =>
+    targets.has(targetSystem) && (workspaces === undefined || workspaces.has(workspaceId));
 }
 
 /**
@@ -887,11 +899,11 @@ export interface ProofSpineBackends {
   /** The per-target write adapter (deterministic transport). */
   readonly writeAdapters: WriteAdapterRegistry;
   /**
-   * The systems whose writes go to a REAL sender ({@link armedWriteTargets}). Empty ⇒ `writeAdapters` sit over the
-   * stub, which fabricates success receipts. Linear slice 3+4: every owner-approved write checks its own system
-   * here and refuses or waits when it is absent.
+   * Does this system, in this workspace, go to a REAL sender that can authenticate ({@link writeArmedFor})? `false`
+   * everywhere ⇒ `writeAdapters` sit over the stub, which fabricates success receipts. Linear slice 3+4: every
+   * owner-approved write checks its own system AND workspace here and refuses or waits when it is `false`.
    */
-  readonly armedTargets: ReadonlySet<TargetSystem>;
+  readonly armedFor: ArmedFor;
   /** The GBrain index client (deterministic transport). */
   readonly indexClient: IndexApplyClient;
   /** The local-provider config ALWAYS handed to the broker (never undefined). */
@@ -1028,7 +1040,7 @@ export async function assembleBackends(
     logger,
     broker,
     writeAdapters,
-    armedTargets: armedWriteTargets(config.writeTransport),
+    armedFor: writeArmedFor(config.writeTransport),
     indexClient,
     localConfig,
     now,

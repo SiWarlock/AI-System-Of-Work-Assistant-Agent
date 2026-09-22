@@ -541,6 +541,32 @@ describe("the proof-spine gateway's approval check — review follow-ups (rules 
     expect(creates).toHaveLength(0);
   });
 
+  it("⛔ per workspace: a system armed only for ANOTHER workspace does not send this workspace's approved card", async () => {
+    const creates: AdapterTransportRequest[] = [];
+    const b = await assembleBackends(
+      {
+        now: () => NOW,
+        allowedLocalEndpoints: [LOCAL_ENDPOINT],
+        writeTransport: {
+          enabled: true,
+          targets: ["todoist"],
+          workspaces: ["some-other-workspace"],
+          make: () => (req) => {
+            if (req.op !== "query") creates.push(req);
+            return Promise.resolve(req.op === "query" ? { ok: true, object: null } : { ok: true, object: { externalObjectId: "x" } });
+          },
+        },
+      },
+      { candidateOutput: {} },
+    );
+    openBackends.push(b);
+    const { action, envelope } = linearPair("todo-other-ws", "hash:W");
+    await approvedCard(b, envelope, "hash:W");
+    const res = await buildProofSpineActivities(b, paramsFor()).approvalDispatchApproved(action, envelope);
+    expect(res.ok).toBe(false);
+    expect(creates).toHaveLength(0);
+  });
+
   it("⛔ owner decision: with NO real sender armed, an approved card is never sent through the stub", async () => {
     const b = await assembleBackends({ now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT] }, { candidateOutput: {} });
     openBackends.push(b);

@@ -129,6 +129,9 @@ export async function resolveLinearWriteArming(deps: LinearWriteArmingDeps): Pro
       // The router below serves Linear only and refuses every other system, so say so: every other
       // system's approved writes then wait instead of being closed as rejected (Linear slice 3+4 review).
       targets: ["linear"],
+      // …and only for the workspaces whose key RESOLVED above: a Linear card in any other workspace would be
+      // refused by the key lookup and closed as rejected, so it must wait instead (Linear slice 3+4 review).
+      workspaces,
       make: () =>
         createRoutedAdapterTransport({
           linear: createWriteHttpTransport(LINEAR_WRITE_SPEC, { http: deps.http ?? createFetchHttpTransport(), secrets }),

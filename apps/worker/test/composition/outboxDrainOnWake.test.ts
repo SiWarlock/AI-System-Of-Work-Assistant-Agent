@@ -185,7 +185,7 @@ describe("buildProofSpineActivities — the write-outbox drain-on-wake (task 21.
     );
     backendsRevisionsRepo = backends.repos.knowledgeRevisions;
     try {
-      expect(backends.armedTargets.size).toBe(0);
+      expect(backends.armedFor("calendar", String(WS))).toBe(false);
       await backends.repos.outbox.enqueue(makeDueEntry());
       buildProofSpineActivities(backends, baseParams());
       await flush();
@@ -195,6 +195,30 @@ describe("buildProofSpineActivities — the write-outbox drain-on-wake (task 21.
       const after = await backends.repos.outbox.get("outbox_drain_on_wake_1");
       expect(after.ok && after.value.status).toBe("retry_queued");
       expect(after.ok && after.value.attempts).toBe(0);
+    } finally {
+      backends.close();
+      backendsRevisionsRepo = undefined;
+    }
+  });
+
+  it("⛔ an entry whose system is armed only for ANOTHER workspace is not driven (per-workspace arming)", async () => {
+    const backends = await assembleBackends(
+      {
+        now: () => NOW,
+        allowedLocalEndpoints: [LOCAL_ENDPOINT],
+        dbPath: tempDbPath(),
+        writeTransport: { enabled: true, targets: ["calendar"], workspaces: ["some-other-workspace"], make: () => REAL_VENDOR },
+      },
+      { candidateOutput: {} },
+    );
+    backendsRevisionsRepo = backends.repos.knowledgeRevisions;
+    try {
+      await backends.repos.outbox.enqueue(makeDueEntry());
+      buildProofSpineActivities(backends, baseParams());
+      await flush();
+      expect(await backends.receiptStore.getByIdempotencyKey("idem_calendar_drain_on_wake_1")).toBeUndefined();
+      const after = await backends.repos.outbox.get("outbox_drain_on_wake_1");
+      expect(after.ok && after.value.status).toBe("retry_queued");
     } finally {
       backends.close();
       backendsRevisionsRepo = undefined;

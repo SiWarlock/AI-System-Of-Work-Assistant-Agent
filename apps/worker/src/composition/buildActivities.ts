@@ -927,12 +927,12 @@ export function buildProofSpineActivities(
       // honours cards approved in the Approvals screen, so it must check two more things. (1) rule 3: the
       // APPROVED payload is the one being sent — the card is approved for its payloadHash, not for any payload
       // under the same replay key. (2) owner decision: never "approve" a write that would go to the stub,
-      // which fabricates receipts — with no real sender for this card's SYSTEM, the card simply waits.
+      // which fabricates receipts — with no real sender for this card's SYSTEM in its WORKSPACE, it simply waits.
       return (
         got.ok &&
         got.value.status === "approved" &&
         got.value.payloadHash === env.payloadHash &&
-        backends.armedTargets.has(env.targetSystem)
+        backends.armedFor(env.targetSystem, String(params.meetingJobInputs.workspaceId))
       );
     },
     audit: async (rec): Promise<void> => {
@@ -1158,7 +1158,7 @@ export function buildProofSpineActivities(
   const outboxDepthSurface = createHealthSurface(createPersistentHealthSurfaceStore(backends.healthItems));
   const drainOnWakeDeps = buildDrainDeps({
     // Linear slice 3+4 review: drive only entries whose system has a REAL sender (see the call site below).
-    shouldDrive: (entry): boolean => backends.armedTargets.has(entry.targetSystem as TargetSystem),
+    shouldDrive: (entry): boolean => backends.armedFor(entry.targetSystem as TargetSystem, entry.workspaceId),
     gatewayDeps: externalWriteDeps,
     workspaceId: String(params.meetingJobInputs.workspaceId),
     writeAdapters: backends.writeAdapters,
