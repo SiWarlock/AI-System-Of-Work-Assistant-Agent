@@ -69,9 +69,13 @@ export type ExternalApprovalOutcome =
   | { readonly kind: "already_done" }
   | { readonly kind: "dispatched"; readonly status: ExternalWriteResult["status"] };
 
-/** A dispatch that did not end in a written receipt, reported for System Health. Content-free. */
+/**
+ * An APPROVED card whose write did not end in a receipt, reported for System Health. Content-free. `not_sent`
+ * is the owner decision's "and say so" (2026-09-22): writes off, nothing saved, or no onboarded workspace — the
+ * owner approved it and it will not go out until something changes.
+ */
 export interface ExternalApprovalFailure {
-  readonly kind: "held" | "rejected" | "conflict" | "integrity";
+  readonly kind: "held" | "rejected" | "conflict" | "integrity" | "not_sent";
   readonly approvalId: string;
   readonly reason?: ExternalApprovalRefusal;
 }
@@ -198,8 +202,11 @@ function failureOf(outcome: ExternalApprovalOutcome, approvalId: string): Extern
     if (outcome.status === "conflict") return { kind: "conflict", approvalId };
     return undefined;
   }
-  if (outcome.kind === "refused" && (outcome.reason === "workspace_mismatch" || outcome.reason === "payload_mismatch")) {
-    return { kind: "integrity", approvalId, reason: outcome.reason };
+  if (outcome.kind === "refused") {
+    if (outcome.reason === "workspace_mismatch" || outcome.reason === "payload_mismatch") {
+      return { kind: "integrity", approvalId, reason: outcome.reason };
+    }
+    return { kind: "not_sent", approvalId, reason: outcome.reason };
   }
   return undefined;
 }
@@ -233,7 +240,9 @@ export function resolveExternalApprovalDispatch(
 /** A reported dispatch failure as a System Health item: a closed class, keyed by the approval, no content. */
 export function externalApprovalFailureToHealth(f: ExternalApprovalFailure, now: string): HealthFailure {
   const message =
-    f.kind === "held"
+    f.kind === "not_sent"
+      ? `approved external write not sent: ${f.reason ?? "unknown"}`
+      : f.kind === "held"
       ? "approved external write held; it will be retried"
       : f.kind === "rejected"
         ? "approved external write was rejected"
@@ -241,7 +250,7 @@ export function externalApprovalFailureToHealth(f: ExternalApprovalFailure, now:
           ? "approved external write hit a conflict"
           : `approved external write refused: ${f.reason ?? "integrity"}`;
   return {
-    failureClass: f.kind === "held" || f.kind === "rejected" ? "write_through_failed" : "conflict_review",
+    failureClass: f.kind === "held" || f.kind === "rejected" || f.kind === "not_sent" ? "write_through_failed" : "conflict_review",
     subjectRef: f.approvalId,
     message,
     auditRef: auditId(`approval-dispatch:${f.approvalId}`),

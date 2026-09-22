@@ -292,6 +292,20 @@ describe("createApprovalsProposeSink — saves the action + envelope for a later
     expect(a.store.size).toBe(1);
   });
 
+  it("a retry after the card failed to create REUSES the saved entry (holdWrite's replay gate) — one entry, one card", async () => {
+    const out = fakeOutbox();
+    const store = new Map<string, Approval>();
+    const failing = fakeApprovals({ createError: { code: "unavailable", message: "busy" }, store });
+    const first = await makeSink(failing.repo, true, out.repo).record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });
+    expect(isErr(first)).toBe(true); // saved, but no card
+    expect(out.rows.size).toBe(1);
+    const ok2 = fakeApprovals({ store });
+    const second = await makeSink(ok2.repo, true, out.repo).record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });
+    expect(isOk(second) && second.value.created).toBe(true);
+    expect(out.rows.size).toBe(1);
+    expect(store.size).toBe(1);
+  });
+
   it("⛔ if the entry cannot be saved, NO card is created — a card with nothing to send would be a lie", async () => {
     const out = fakeOutbox({ enqueueError: { code: "unknown", message: "disk full at /Users/secret/path" } });
     const a = fakeApprovals();

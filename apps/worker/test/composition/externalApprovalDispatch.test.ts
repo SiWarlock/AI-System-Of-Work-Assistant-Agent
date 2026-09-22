@@ -9,6 +9,10 @@
 // never the stub's fabricated one — and the saved entry stays retryable. See the "writes off" cases.
 import { describe, it, expect, afterEach } from "vitest";
 import { workspaceId, actionId, defaultWorkspace } from "@sow/contracts";
+import { approvalIdFor, approvalOutboxId } from "@sow/domain";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Approval, ProposedAction, ExternalWriteEnvelope, WorkspaceId } from "@sow/contracts";
 import type { AdapterTransport, AdapterTransportRequest, TransportResponse } from "@sow/integrations";
 import { assembleBackends, type ProofSpineBackends } from "../../src/composition/backends";
@@ -246,12 +250,47 @@ describe("dispatchExternalApproval — refuses WITHOUT writing when anything doe
     expect(await cardCount(b)).toBe(before);
   });
 
-  it("refuses a workspace that is not onboarded, and the unassigned sentinel", async () => {
+  // Each case below builds a card and its saved entry BY HAND, consistent in every way (same workspace, same id
+  // derivation, same payload) except the one fact its guard checks — so ONLY that guard can stop the write.
+  // (Review 2026-09-22: the first versions reused a real card and were stopped by the workspace-mismatch guard
+  // instead, so they passed with the guard under test deleted.)
+  async function handMade(b: ProofSpineBackends, ws: string, key: string, entryKey = key): Promise<Approval> {
+    const id = approvalIdFor({ idempotencyKey: `idem:${key}`, workspace: ws });
+    const enq = await b.repos.outbox.enqueue({
+      outboxId: approvalOutboxId(id), actionRef: `act-${key}`, workspaceId: ws, targetSystem: "linear",
+      canonicalObjectKey: `lin:${key}`, idempotencyKey: `idem:${entryKey}`, payloadHash: `hash:${key}`, status: "proposed",
+      payload: { teamId: "team-1", title: key }, approvalPolicy: "required", attempts: 0, enqueuedAt: NOW, updatedAt: NOW,
+    });
+    if (!enq.ok) throw new Error("seed failed");
+    return {
+      id, actionRef: `act-${key}` as Approval["actionRef"], subjectKind: "external_action", workspaceId: ws as WorkspaceId,
+      status: "approved", actor: "owner", channel: "mac", payloadHash: `hash:${key}`,
+    };
+  }
+
+  it("refuses a workspace that is not onboarded (only the onboarding guard can stop this card)", async () => {
     const v = vendor();
     const b = await backends(v.transport);
-    const approval = await proposeAndApprove(b, "unk");
-    expect((await dispatchExternalApproval({ ...approval, workspaceId: workspaceId("personal-business") }, depsFor(b))).kind).toBe("refused");
-    expect((await dispatchExternalApproval({ ...approval, workspaceId: "__unassigned__" as WorkspaceId }, depsFor(b))).kind).toBe("refused");
+    const card = await handMade(b, "personal-business", "pb"); // no workspace_config row for it
+    expect(await dispatchExternalApproval(card, depsFor(b))).toEqual({ kind: "refused", reason: "unknown_workspace" });
+    expect(v.calls).toHaveLength(0);
+  });
+
+  it("refuses the unassigned sentinel by its OWN reason (no config row can exist for it — the contract rejects the id)", async () => {
+    // The sentinel fails WorkspaceIdSchema, so the onboarding guard would also stop it; the explicit guard is a
+    // backstop. Pinning the REASON is what shows the backstop fires first (without it: unknown_workspace).
+    const v = vendor();
+    const b = await backends(v.transport);
+    const card = await handMade(b, "__unassigned__", "un");
+    expect(await dispatchExternalApproval(card, depsFor(b))).toEqual({ kind: "refused", reason: "unassigned_workspace" });
+    expect(v.calls).toHaveLength(0);
+  });
+
+  it("refuses a saved entry at the card's id that is not the card's own write (id-derivation check)", async () => {
+    const v = vendor();
+    const b = await backends(v.transport);
+    const card = await handMade(b, String(WS), "mine", "someone-elses-key");
+    expect(await dispatchExternalApproval(card, depsFor(b))).toEqual({ kind: "refused", reason: "no_saved_action" });
     expect(v.calls).toHaveLength(0);
   });
 });
@@ -268,6 +307,66 @@ describe("⛔ OWNER DECISION — writes OFF: approving sends nothing and fakes n
     expect(entry.writeReceipt).toBeUndefined();
     const receipt = await b.repos.writeReceipts.getByIdempotencyKey("idem:off");
     expect(receipt.ok).toBe(false); // the stub never got the chance to fabricate one
+  });
+});
+
+describe("⛔ OWNER DECISION — REFUSE AND SAY SO: every approved card that is not sent is reported", () => {
+  it("writes off and nothing saved each reach System Health, as content-free reasons", async () => {
+    const off = await backends();
+    const failures: ExternalApprovalFailure[] = [];
+    await dispatchExternalApproval(await proposeAndApprove(off, "say-off"), depsFor(off, failures));
+    const on = await backends(vendor().transport);
+    const orphan: Approval = { ...(await proposeAndApprove(on, "say-gone")), id: "idem_1111111111111111111111111111111111111111111111111111111111111111" as Approval["id"] };
+    await dispatchExternalApproval(orphan, depsFor(on, failures));
+    expect(failures.map((f) => [f.kind, f.reason])).toEqual([
+      ["not_sent", "writes_off"],
+      ["not_sent", "no_saved_action"],
+    ]);
+  });
+
+  it("a card that is only skipped (not approved) is not reported", async () => {
+    const b = await backends(vendor().transport);
+    const failures: ExternalApprovalFailure[] = [];
+    const card = await proposeAndApprove(b, "quiet");
+    await dispatchExternalApproval({ ...card, status: "deferred" }, depsFor(b, failures));
+    expect(failures).toEqual([]);
+  });
+});
+
+describe("⛔ OWNER DECISION — STAYS RETRYABLE: refused while off, sent once the switch is on", () => {
+  it("the same saved entry is sent after a restart with the sender armed", async () => {
+    const dbPath = join(mkdtempSync(join(tmpdir(), "sow-retry-")), "ops.db");
+    const off = await assembleBackends({ now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT], dbPath }, { candidateOutput: {} });
+    await off.repos.workspaceConfig.upsert(
+      defaultWorkspace({ id: WS, name: "ws", type: "employer_work", markdownRepoPath: "/tmp/ws", gbrainBrainId: "ws" }),
+    );
+    const card = await proposeAndApprove(off, "retry");
+    expect(await dispatchExternalApproval(card, depsFor(off))).toEqual({ kind: "refused", reason: "writes_off" });
+    off.close();
+
+    const v = vendor();
+    const on = await assembleBackends(
+      { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT], dbPath, writeTransport: { enabled: true, make: () => v.transport } },
+      { candidateOutput: {} },
+    );
+    open.push(on);
+    expect(await dispatchExternalApproval(card, depsFor(on))).toEqual({ kind: "dispatched", status: "created" });
+    expect(v.calls.filter((c) => c.op === "create")).toHaveLength(1);
+  });
+});
+
+describe("the propose sink under a race (its contract b)", () => {
+  it("two identical concurrent proposals: both succeed, exactly one card is created, one entry is saved", async () => {
+    const b = await backends(vendor().transport);
+    const sink = createApprovalsProposeSink({ approvals: b.repos.approvals, workspaceConfig: b.repos.workspaceConfig, outbox: b.repos.outbox, now: () => NOW });
+    const { action, envelope } = linearIssue("race");
+    const [r1, r2] = await Promise.all([
+      sink.record({ action, envelope, workspaceId: WS }),
+      sink.record({ action, envelope, workspaceId: WS }),
+    ]);
+    expect(r1.ok && r2.ok).toBe(true);
+    expect([r1, r2].filter((r) => r.ok && r.value.created)).toHaveLength(1);
+    expect(await cardCount(b)).toBe(1);
   });
 });
 
@@ -335,5 +434,8 @@ describe("externalApprovalFailureToHealth — what System Health shows (rule 7: 
     const integrity = externalApprovalFailureToHealth({ kind: "integrity", approvalId: "idem_x", reason: "payload_mismatch" }, at);
     expect(integrity.failureClass).toBe("conflict_review");
     expect(integrity.message).toContain("payload_mismatch");
+    const off = externalApprovalFailureToHealth({ kind: "not_sent", approvalId: "idem_x", reason: "writes_off" }, at);
+    expect(off.failureClass).toBe("write_through_failed");
+    expect(off.message).toBe("approved external write not sent: writes_off");
   });
 });

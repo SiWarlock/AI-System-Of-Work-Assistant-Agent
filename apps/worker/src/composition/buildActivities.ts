@@ -1137,13 +1137,14 @@ export function buildProofSpineActivities(
   // retry reuses the receipt or finds the issue it already created. ⚠ That the probe finds it on REAL
   // Linear is not yet measured — slice 6's live test checks it. Every other vendor is refused
   // (`target_not_armed`), never faked. Pinned by packages/evals/test/reachability-claim-drift.test.ts.
-  // ⛔⛔ BUT NOTHING PUTS A HELD EXTERNAL WRITE IN THE OUTBOX TODAY (measured 2026-09-22; review of
-  // 6b7d0c32, completeness critic). `holdWrite`'s only production caller is notebook sync; no production
-  // code sets the `retry` field `surfaceWorkflowFailure` enqueues; and `runApprovalFlow` surfaces a
-  // `held` dispatch as a health item and drops it (approvalFlow.ts). ⇒ the real risk on this path is a
-  // LOST write, not a duplicate one: a rate-limited approved Linear issue is never retried. An earlier
-  // cut of this comment said a held Linear entry "DOES reach api.linear.app" — reassuring and false.
-  // Linear slice 3 must make `held` durable before anything dispatches Linear.
+  // ⭐ WHAT PUTS AN EXTERNAL WRITE IN THIS OUTBOX (re-derived 2026-09-22, after Linear slice 3+4): the propose
+  // sink SAVES every Copilot proposal's action + envelope here (`holdWrite`, status `proposed`), and the
+  // Approvals-screen dispatch (`externalApprovalDispatch.ts`) folds a HELD outcome back onto that entry as
+  // `retry_queued` — so an approved write that is held is kept, not lost. ⚠ But this drain only runs where the
+  // proof spine does (auto-ingest on), and only for ITS workspace; on a desktop install nothing re-drives a held
+  // or writes-off entry until the owner uses "Send now" (step 4). The Temporal `runApprovalFlow` path still
+  // drops a `held` dispatch (approvalFlow.ts); it has no production driver. (An earlier cut of this comment said
+  // "nothing puts a held external write in the outbox today", which slice 3+4 made false.)
   // task 24.8 / REQ-NF-006 — bind the OBS-2 depth signal to the DURABLE health store.
   //   The probe existed but was reachable only from `holdWrite` (dormant until
   //   §ARM-21), so outbox depth reached NO surface on the path that actually runs
