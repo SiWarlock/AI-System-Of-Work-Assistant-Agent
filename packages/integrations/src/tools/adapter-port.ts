@@ -160,7 +160,13 @@ export interface TargetWriteAdapter {
  * gateway: a real transport refused every write as `workspace_unscoped` (found 2026-09-21; pinned by
  * `test/write-workspace-per-dispatch.test.ts`, which uses the production arrangement).
  *
- * Optional, so adapters that make no vendor call (the unrouted and notebook stubs) need not take it.
+ * Optional, so an adapter that makes no vendor call (the unrouted sentinel) need not take it.
+ * ⛔ CORRECTED 2026-09-21 (review, upheld 3/3): this used to also call the NOTEBOOK adapter a stub
+ * that "makes no vendor call". It is not. `buildRoutedDriveAdapter` (apps/worker/src/composition/
+ * notebookSyncBind.ts) runs a NESTED gateway dispatch into the real Drive adapter, and it currently
+ * DROPS this context — so once `buildNotebookSync` is wired, every notebook write will be refused as
+ * `workspace_unscoped`. It is unreachable today (zero callers) and fails closed, which is why it was
+ * left; whoever wires it must forward the context into that nested dispatch first.
  */
 export interface AdapterCallContext {
   readonly workspaceId?: string;

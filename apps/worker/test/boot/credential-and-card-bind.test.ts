@@ -413,3 +413,25 @@ describe("21.8 — the card renderer: dormant no-op by default, parity-armed whe
     expect(res).toEqual(ok({ channels: ["mac", "telegram"] }));
   });
 });
+
+// ⛔ RULE 4 — the output workflows' writes (daily brief, period review, project sync, cross-calendar)
+// go through a SECOND propose binding in buildActivities, separate from the one `sourcePropose` uses.
+// The 2026-09-03 threading pass MISSED it, so every one of those writes would have failed the
+// credential pre-check as `workspace_unscoped` once secrets were armed. Fixed in ae0e2b16 with no
+// test (review finding, upheld 3/3) — a later edit could drop it again and nothing would go red.
+describe("rule 4 — the output workflows' propose binding carries the job workspace", () => {
+  it("projectSyncProposeActions resolves the credential scoped to the job workspace, and writes", async () => {
+    const backends = await freshBackends();
+    const getSecret = vi.fn(async (_ref: string): Promise<Result<string, WriteSecretUnavailable>> => ok("faketoken-xyz"));
+    const acts = buildProofSpineActivities(backends, paramsFor({ secretsAccessor: { getSecret } }));
+    const { action, envelope } = todoistActionAndEnvelope("output-wf");
+    // Approve through the FIRST binding (sourcePropose), then write through the SECOND.
+    await proposeThenApprove(acts, backends, action, envelope);
+    getSecret.mockClear();
+    await acts.projectSyncProposeActions(action, envelope);
+    // Without the workspace on this binding the gateway refuses BEFORE any lookup, so the spy would
+    // never be called — which is exactly the regression this pins.
+    expect(getSecret).toHaveBeenCalledWith("keychain://connector-write.ws-emp/todoist");
+    expect(getSecret.mock.calls.every(([ref]) => ref === "keychain://connector-write.ws-emp/todoist")).toBe(true);
+  });
+});
