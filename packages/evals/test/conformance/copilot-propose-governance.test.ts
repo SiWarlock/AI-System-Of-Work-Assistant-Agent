@@ -22,7 +22,7 @@
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr } from "@sow/contracts";
 import type { Approval, ProposedAction, WorkspaceId, Workspace, ProviderRoute } from "@sow/contracts";
-import type { ApprovalRepository, WorkspaceConfigRepository, DbError, DbResult } from "@sow/db";
+import type { ApprovalRepository, WorkspaceConfigRepository, OutboxRepository, OutboxEntry, DbError, DbResult } from "@sow/db";
 import {
   deriveCopilotContentTrust,
   resolveCopilotAgentCapability,
@@ -104,8 +104,21 @@ const fakeWorkspaceConfig = (known: boolean): WorkspaceConfigRepository =>
         known ? ok({ id } as unknown as Workspace) : err({ code: "not_found", message: "unknown" } satisfies DbError),
       ),
   }) as WorkspaceConfigRepository;
+// Linear slice 3+4: the sink now also saves the card's action + envelope (awaiting approval, never dispatched
+// from the sink), so it needs an outbox. An in-memory one keeps this suite's claims — ONE pending card, zero
+// applyTransition — exactly as they were.
+const fakeOutbox = (): OutboxRepository => {
+  const rows = new Map<string, OutboxEntry>();
+  return {
+    enqueue: (e: OutboxEntry): DbResult<OutboxEntry> => (rows.set(e.idempotencyKey, e), Promise.resolve(ok(e))),
+    getByIdempotencyKey: (k: string): DbResult<OutboxEntry> => {
+      const found = rows.get(k);
+      return Promise.resolve(found ? ok(found) : err({ code: "not_found", message: "none" } satisfies DbError));
+    },
+  } as unknown as OutboxRepository;
+};
 const makeSink = (approvals: ApprovalRepository, known = true): CopilotProposeSink =>
-  createApprovalsProposeSink({ approvals, workspaceConfig: fakeWorkspaceConfig(known), now: () => NOW });
+  createApprovalsProposeSink({ approvals, workspaceConfig: fakeWorkspaceConfig(known), outbox: fakeOutbox(), now: () => NOW });
 
 /** A fake sink that captures what it was asked to record (for routing-invariance + derive-fails-first checks). */
 function fakeSink(): { sink: CopilotProposeSink; recorded: Array<{ action: ProposedAction; workspaceId: WorkspaceId }> } {

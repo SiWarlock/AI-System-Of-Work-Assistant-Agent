@@ -3741,6 +3741,8 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
           const proposeSink = createApprovalsProposeSink({
             approvals: backends.repos.approvals,
             workspaceConfig: backends.repos.workspaceConfig,
+            // Linear slice 3+4: the card's action + envelope are saved here so its approval can be dispatched.
+            outbox: backends.repos.outbox,
             now: backends.now,
           });
           // §13.10a G4b-3 — the SEMANTIC-write propose deps (dormant behind `copilotProposeKnowledge`). Mirror

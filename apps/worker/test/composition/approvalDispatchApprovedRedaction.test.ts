@@ -441,7 +441,7 @@ describe("the approval id is ONE derivation — a card recorded by the propose s
     expect(ws.ok).toBe(true);
 
     // Record the pending card the way a real proposer does, then approve it as the Approvals screen does.
-    const sink = createApprovalsProposeSink({ approvals: b.repos.approvals, workspaceConfig: b.repos.workspaceConfig, now: () => NOW });
+    const sink = createApprovalsProposeSink({ approvals: b.repos.approvals, workspaceConfig: b.repos.workspaceConfig, outbox: b.repos.outbox, now: () => NOW });
     const recorded = await sink.record({ action, envelope, workspaceId: WS });
     expect(recorded.ok).toBe(true);
     const pending = await b.repos.approvals.listByStatus("pending");

@@ -10,9 +10,10 @@
 // The THREE security contracts (from the C5.3 adversarial verification):
 //   (a) WORKSPACE PROVENANCE (safety rule 4): `workspaceId` is the agent-job's SERVER-BOUND workspace (bound
 //       by the runner, never model-derived). It is registry-validated (`workspaceConfig.get`; unknown ⇒
-//       fail-closed, approvals untouched) and folded into the derived id — the Approval row has NO workspace
-//       column, so the id fold is the sole write-attribution (a per-workspace inbox READ scope is a separate
-//       §9.8 go-live blocker, tracked for C5.4).
+//       fail-closed, approvals untouched), folded into the derived id, AND stored on the card's own
+//       `workspaceId` column (packages/db/src/schema/approvals.ts), which the per-workspace inbox reads.
+//       ⛔ CORRECTED 2026-09-22: this used to say the Approval row "has NO workspace column", which the §9.8
+//       workspace-scoping work made false, and which this file's own `pending` record contradicted.
 //   (b) PAYLOAD-SWAP TOCTOU (safety rule 3): the idempotencyKey excludes payload. So on a same-id hit whose
 //       `payloadHash` DIVERGES from the recorded card, REJECT — never overwrite (an owner who approved payload
 //       A must never have A' execute). First-write-wins on an identical re-drive; the concurrent-create race
@@ -30,7 +31,8 @@ import type {
   Result,
   WorkspaceId,
 } from "@sow/contracts";
-import type { ApprovalRepository, DbError, WorkspaceConfigRepository } from "@sow/db";
+import type { ApprovalRepository, DbError, OutboxRepository, WorkspaceConfigRepository } from "@sow/db";
+import { holdWrite } from "@sow/integrations";
 import { approvalIdFor } from "@sow/domain";
 import type { CopilotProposeReceipt, CopilotProposeSink } from "./copilotPropose";
 
@@ -44,6 +46,11 @@ export const COPILOT_PROPOSE_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 export interface ApprovalsProposeSinkDeps {
   readonly approvals: ApprovalRepository;
   readonly workspaceConfig: WorkspaceConfigRepository;
+  /**
+   * Where the card's action + envelope are SAVED, so the owner's approval can later be dispatched
+   * through the Tool Gateway (Linear slice 3+4). REQUIRED: a card saved without them has nothing to send.
+   */
+  readonly outbox: OutboxRepository;
   /** Returns the current time as an ISO-8601 string (for expiresAt). */
   readonly now: () => string;
   /** Pending-card expiry window; defaults to COPILOT_PROPOSE_EXPIRY_MS. */
@@ -129,6 +136,25 @@ export function createApprovalsProposeSink(deps: ApprovalsProposeSinkDeps): Copi
       // (b) get-then-create: a hit is first-write-wins / divergence-reject.
       const existing = await deps.approvals.get(id);
       if (isOk(existing)) return reconcileExisting(existing.value, envelope);
+
+      // (c) SAVE the action + envelope BEFORE the card (Linear slice 3+4, rule 3). The dispatch that follows the
+      // owner's approval rebuilds the write from this entry, so a card must never exist without it: a save
+      // failure returns BEFORE `approvals.create`. `not_approved` ⇒ status `proposed` — awaiting approval,
+      // never dispatched from here. The entry carries the CARD's workspace (rule 4). `holdWrite` reuses an
+      // entry already saved under this idempotencyKey, so a re-drive never saves a second one. The id is
+      // derived from the replay key: deterministic, no clock or RNG.
+      const saved = await holdWrite(
+        { env: envelope, action, reason: "not_approved", workspaceId: String(workspaceId) },
+        deps.outbox,
+        { clock: deps.now, outboxId: () => `ob_${envelope.idempotencyKey}` },
+      );
+      if (!isOk(saved)) {
+        return err(
+          failure("degraded_unavailable", "copilot propose: could not save the action to send", {
+            cause: { code: "COPILOT_PROPOSE_OUTBOX_UNAVAILABLE" },
+          }),
+        );
+      }
 
       const pending: Approval = {
         id,

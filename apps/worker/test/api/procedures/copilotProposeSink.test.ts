@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { ok, err, isOk, isErr, approvalId as makeApprovalId } from "@sow/contracts";
 import type { Approval, ProposedAction, ExternalWriteEnvelope, WorkspaceId, Workspace } from "@sow/contracts";
-import type { ApprovalRepository, WorkspaceConfigRepository, DbError, DbResult } from "@sow/db";
+import type { ApprovalRepository, WorkspaceConfigRepository, OutboxRepository, OutboxEntry, DbError, DbResult } from "@sow/db";
 import { buildIdempotencyKey } from "@sow/domain";
 import {
   createApprovalsProposeSink,
@@ -89,10 +89,28 @@ function fakeWorkspaceConfig(known: boolean): WorkspaceConfigRepository {
   } as WorkspaceConfigRepository;
 }
 
-function makeSink(approvals: ApprovalRepository, known = true) {
+/** A fake OutboxRepository over an in-memory map keyed by idempotencyKey, with an injectable enqueue fault. */
+function fakeOutbox(opts: { enqueueError?: DbError } = {}): { repo: OutboxRepository; rows: Map<string, OutboxEntry> } {
+  const rows = new Map<string, OutboxEntry>();
+  const repo = {
+    enqueue: (e: OutboxEntry): DbResult<OutboxEntry> => {
+      if (opts.enqueueError !== undefined) return Promise.resolve(err(opts.enqueueError));
+      rows.set(e.idempotencyKey, e);
+      return Promise.resolve(ok(e));
+    },
+    getByIdempotencyKey: (k: string): DbResult<OutboxEntry> => {
+      const found = rows.get(k);
+      return Promise.resolve(found ? ok(found) : err({ code: "not_found", message: "no row" } satisfies DbError));
+    },
+  } as unknown as OutboxRepository;
+  return { repo, rows };
+}
+
+function makeSink(approvals: ApprovalRepository, known = true, outbox: OutboxRepository = fakeOutbox().repo) {
   return createApprovalsProposeSink({
     approvals,
     workspaceConfig: fakeWorkspaceConfig(known),
+    outbox,
     now: () => NOW,
   });
 }
@@ -231,5 +249,56 @@ describe("createApprovalsProposeSink — record a pending Approval (direct repos
       }),
     );
     expect(r.value.approvalRef).toBe(String(expected));
+  });
+});
+
+// Linear slice 3+4, step 2 — the card's action + envelope are SAVED at propose time, so an approval can
+// later be dispatched through the Tool Gateway (rule 3). Before this, the sink kept only actionRef +
+// payloadHash and dropped both, so there was nothing to send once the owner approved.
+describe("createApprovalsProposeSink — saves the action + envelope for a later dispatch (rule 3)", () => {
+  let fx: ReturnType<typeof fixtureActionEnvelope>;
+  beforeEach(() => {
+    fx = fixtureActionEnvelope();
+  });
+
+  it("saves ONE outbox entry, awaiting approval, scoped to the CARD's workspace, with the payload to send", async () => {
+    const out = fakeOutbox();
+    const r = await makeSink(fakeApprovals().repo, true, out.repo).record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });
+    expect(isOk(r)).toBe(true);
+    const entry = out.rows.get(fx.envelope.idempotencyKey);
+    expect(entry).toBeDefined();
+    expect(entry?.status).toBe("proposed"); // awaiting the approval gate — never dispatched from here
+    expect(entry?.workspaceId).toBe(String(WS)); // rule 4: the card's own workspace
+    expect(entry?.payloadHash).toBe(fx.envelope.payloadHash);
+    expect(entry?.payload).toEqual(fx.action.payload);
+    expect(entry?.approvalPolicy).toBe(fx.action.approvalPolicy);
+    expect(entry?.targetSystem).toBe(fx.envelope.targetSystem);
+    expect(entry?.canonicalObjectKey).toBe(fx.envelope.canonicalObjectKey);
+  });
+
+  it("an identical re-drive keeps exactly ONE entry and ONE card", async () => {
+    const out = fakeOutbox();
+    const a = fakeApprovals();
+    const sink = makeSink(a.repo, true, out.repo);
+    await sink.record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });
+    const again = await sink.record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });
+    expect(isOk(again) && again.value.created).toBe(false);
+    expect(out.rows.size).toBe(1);
+    expect(a.store.size).toBe(1);
+  });
+
+  it("⛔ if the entry cannot be saved, NO card is created — a card with nothing to send would be a lie", async () => {
+    const out = fakeOutbox({ enqueueError: { code: "unknown", message: "disk full at /Users/secret/path" } });
+    const a = fakeApprovals();
+    const r = await makeSink(a.repo, true, out.repo).record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });
+    expect(isErr(r)).toBe(true);
+    expect(a.createCalls()).toBe(0);
+    expect(JSON.stringify(r)).not.toContain("/Users/secret/path"); // rule 7: a bounded code, never the driver text
+  });
+
+  it("an UNKNOWN workspace saves nothing either", async () => {
+    const out = fakeOutbox();
+    await makeSink(fakeApprovals().repo, false, out.repo).record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });
+    expect(out.rows.size).toBe(0);
   });
 });
