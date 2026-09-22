@@ -1116,7 +1116,8 @@ export function buildProofSpineActivities(
   // discipline). SAFE, evidence: `backends.writeAdapters` (backends.ts) is
   // `buildWriteAdapterRegistry({ transport: selectAdapterTransport(config.writeTransport), ... })`.
   // With `config.writeTransport` unset (the shipped default) that is the in-memory
-  // `createStubAdapterTransport()`. ⛔ RE-DERIVED 2026-09-21 (review, upheld 3/3): this used to say
+  // `createStubAdapterTransport()` — and since 2026-09-22 the drain does not run at all in that case (see
+  // the `writeTransportArmed` gate at the drain's call site below), so the stub cannot fabricate a receipt. ⛔ RE-DERIVED 2026-09-21 (review, upheld 3/3): this used to say
   // `config.writeTransport` is "never set by any production BootConfig caller", which stopped being true
   // at `a1d24153` — the desktop worker host now sets it when `SOW_LINEAR_WRITES` is on AND a Linear key
   // resolves. IF a Linear entry is in the outbox, a re-drive then reaches api.linear.app, and that is
@@ -1173,10 +1174,17 @@ export function buildProofSpineActivities(
       },
     },
   });
-  const wakeDrainOnConnect = buildWakeDrainHook({ outbox: backends.repos.outbox, drainDeps: drainOnWakeDeps });
-  void wakeDrainOnConnect({ reason: "network_reconnect", now: now() }).catch(() => {
-    /* fail-SAFE: a drain-on-wake fault must never block activity construction (§16) */
-  });
+  // ⛔ ONLY WHEN A REAL SENDER IS ARMED (owner decision 2026-09-22, Linear slice 3+4). Unarmed, the write
+  // adapters sit over the in-memory stub, which FABRICATES success receipts — and since step 2 this outbox
+  // holds the saved action of every approved Approvals-screen card, so an unarmed drain would mark an
+  // approved card "sent" when nothing was sent. Unarmed ⇒ the entries simply wait; once the owner arms the
+  // sender, the next wake re-drives them for real. (Task 21.4 originally drained to the stub until armed.)
+  if (backends.writeTransportArmed) {
+    const wakeDrainOnConnect = buildWakeDrainHook({ outbox: backends.repos.outbox, drainDeps: drainOnWakeDeps });
+    void wakeDrainOnConnect({ reason: "network_reconnect", now: now() }).catch(() => {
+      /* fail-SAFE: a drain-on-wake fault must never block activity construction (§16) */
+    });
+  }
 
   // ── ingestion-triage ───────────────────────────────────────────────────────
 

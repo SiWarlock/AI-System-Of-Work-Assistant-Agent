@@ -3,12 +3,14 @@
 // (`network_reconnect`) on every construction, over the SAME `externalWriteDeps`/`backends.writeAdapters`
 // the live `propose`/`dispatchApproved` paths dispatch through. This suite proves, over the REAL
 // `assembleBackends` + `buildProofSpineActivities` composition (never a hand-rolled fake outbox):
-//   • a due, correctly-scoped entry actually drains (status → receipt_recorded) purely from CALLING
-//     `buildProofSpineActivities` — no activity is invoked, proving the wiring is construction-time, not
-//     something a caller has to remember to trigger;
-//   • the receipt's externalObjectId carries the `stub-obj:` marker — proving the drain reached ONLY the
-//     in-memory `createStubAdapterTransport`, never a real vendor (backends.ts's default-OFF gate, evidence
-//     for the "verify no real external write is reachable" review instruction);
+//   • with a REAL sender armed, a due, correctly-scoped entry actually drains (status → receipt_recorded)
+//     purely from CALLING `buildProofSpineActivities` — no activity is invoked, proving the wiring is
+//     construction-time, not something a caller has to remember to trigger;
+//   • ⛔ with NO real sender armed, the drain does not run at all, so the in-memory stub never gets the
+//     chance to FABRICATE a receipt for a write that never happened. CHANGED 2026-09-22 (owner decision,
+//     Linear slice 3+4): this suite used to pin the opposite — that an unarmed drain wrote a `stub-obj:`
+//     receipt. Once approved Approvals-screen cards are saved in this outbox, that would mark an approved
+//     card "sent" when nothing was sent;
 //   • an entry for a DIFFERENT workspace than the one this activities-builder is bound for is left
 //     completely untouched (safety rule 4 / task 24.50) — proving `workspaceId` was threaded, not
 //     defaulted/omitted;
@@ -21,7 +23,7 @@ import { workspaceId, workflowId, sourceId, RevisionIdSchema } from "@sow/contra
 import type { WorkspaceId, WorkflowRunRef, RevisionId } from "@sow/contracts";
 import type { ResolvedWorkspacePolicy } from "@sow/policy";
 import type { AgentExtraction, MeetingJobInputs } from "@sow/workflows";
-import type { OutboxEntry } from "@sow/integrations";
+import type { AdapterTransport, OutboxEntry } from "@sow/integrations";
 import { assembleBackends } from "../../src/composition/backends";
 import { buildProofSpineActivities } from "../../src/composition/buildActivities";
 import type { ProofSpineParams } from "../../src/composition/buildActivities";
@@ -142,10 +144,19 @@ function tempDbPath(): string {
   return join(dir, "ops.db");
 }
 
+/** A fake REAL sender (armed through the owner gate): the probe misses and a create succeeds. */
+const REAL_VENDOR: AdapterTransport = (req) =>
+  Promise.resolve(req.op === "query" ? { ok: true, object: null } : { ok: true, object: { externalObjectId: "vendor-obj-1" } });
+
 describe("buildProofSpineActivities — the write-outbox drain-on-wake (task 21.4/24.8)", () => {
-  it("a due, correctly-scoped entry drains to receipt_recorded purely from calling buildProofSpineActivities — no activity invoked", async () => {
+  it("ARMED: a due, correctly-scoped entry drains to receipt_recorded purely from calling buildProofSpineActivities — no activity invoked", async () => {
     const backends = await assembleBackends(
-      { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT], dbPath: tempDbPath() },
+      {
+        now: () => NOW,
+        allowedLocalEndpoints: [LOCAL_ENDPOINT],
+        dbPath: tempDbPath(),
+        writeTransport: { enabled: true, make: () => REAL_VENDOR },
+      },
       { candidateOutput: {} },
     );
     backendsRevisionsRepo = backends.repos.knowledgeRevisions;
@@ -167,29 +178,37 @@ describe("buildProofSpineActivities — the write-outbox drain-on-wake (task 21.
     }
   });
 
-  it("the recorded receipt's externalObjectId carries the stub marker — never reaches a real vendor", async () => {
+  it("⛔ UNARMED: the drain does not run — the entry is untouched and the stub fabricates NO receipt", async () => {
     const backends = await assembleBackends(
       { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT], dbPath: tempDbPath() },
       { candidateOutput: {} },
     );
     backendsRevisionsRepo = backends.repos.knowledgeRevisions;
     try {
+      expect(backends.writeTransportArmed).toBe(false);
       await backends.repos.outbox.enqueue(makeDueEntry());
       buildProofSpineActivities(backends, baseParams());
       await flush();
 
       const receipt = await backends.receiptStore.getByIdempotencyKey("idem_calendar_drain_on_wake_1");
-      expect(receipt).toBeDefined();
-      expect(receipt?.receipt.externalObjectId).toMatch(/^stub-obj:/);
+      expect(receipt).toBeUndefined();
+      const after = await backends.repos.outbox.get("outbox_drain_on_wake_1");
+      expect(after.ok && after.value.status).toBe("retry_queued");
+      expect(after.ok && after.value.attempts).toBe(0);
     } finally {
       backends.close();
       backendsRevisionsRepo = undefined;
     }
   });
 
-  it("an entry for a DIFFERENT workspace is left completely untouched (safety rule 4 / task 24.50)", async () => {
+  it("an entry for a DIFFERENT workspace is left completely untouched even when ARMED (safety rule 4 / task 24.50)", async () => {
     const backends = await assembleBackends(
-      { now: () => NOW, allowedLocalEndpoints: [LOCAL_ENDPOINT], dbPath: tempDbPath() },
+      {
+        now: () => NOW,
+        allowedLocalEndpoints: [LOCAL_ENDPOINT],
+        dbPath: tempDbPath(),
+        writeTransport: { enabled: true, make: () => REAL_VENDOR },
+      },
       { candidateOutput: {} },
     );
     backendsRevisionsRepo = backends.repos.knowledgeRevisions;
