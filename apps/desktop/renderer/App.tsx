@@ -27,6 +27,7 @@ import { Connectors } from "./surfaces/connectors";
 import { SystemHealth } from "./surfaces/system-health";
 import { CrossWorkspaceLinks } from "./surfaces/cross-workspace-links";
 import { EgressSettings } from "./surfaces/workspace-settings/egress";
+import { Settings } from "./surfaces/settings";
 import { requestVaultOpen, requestVaultReveal } from "./lib/open-in-vault";
 import type { RegisterConnectorInput, ConnectorConfigResult } from "./lib/connector-config";
 import type { CreateCrossWorkspaceLinkInput, CrossWorkspaceLinkResult } from "./lib/cross-workspace-link";
@@ -380,6 +381,9 @@ export function App(): ReactElement {
         />
       ) : state.route.surface === "system-health" ? (
         <SystemHealth items={[...state.health.values()]} />
+      ) : state.route.surface === "settings" ? (
+        // The Settings hub the toolbar gear and sidebar row open (they were both dead until 2026-09-21).
+        <Settings onNavigate={onNavigate} />
       ) : state.route.surface === "workspace-settings" ? (
         // 9.10-C — per-workspace egress posture + the audited fail-SAFE revoke (REQ-S-002, rule 5).
         <EgressSettings

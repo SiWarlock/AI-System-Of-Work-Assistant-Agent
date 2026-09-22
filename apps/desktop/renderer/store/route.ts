@@ -21,7 +21,10 @@ export type Route =
   | { readonly surface: "connectors" }
   | { readonly surface: "system-health" }
   | { readonly surface: "cross-workspace-links" }
-  | { readonly surface: "workspace-settings" };
+  | { readonly surface: "workspace-settings" }
+  // The Settings hub — what the toolbar gear and the sidebar Settings row open. It links to the
+  // settings screens that exist; it is not itself a settings form.
+  | { readonly surface: "settings" };
 
 /**
  * The surface mounted on launch: Today (home). Frozen — it is shared by reference across

@@ -18,6 +18,13 @@ import { connectorCredentialRef, isWriteTarget } from "../../lib/connector-crede
 // tokenRef). WS-8 — with no onboarded workspace selected (workspaceId null), the form is disabled.
 
 
+/** The cadence choices offered at registration. The first entry is not the default; `@daily` is. */
+const CADENCE_CHOICES: readonly { readonly value: string; readonly label: string }[] = [
+  { value: "@hourly", label: "Hourly" },
+  { value: "@daily", label: "Daily" },
+  { value: "@weekly", label: "Weekly" },
+];
+
 export interface ConnectorsProps {
   /** The SELECTED onboarded workspace's real id, or null (global / non-onboarded → disabled). */
   readonly workspaceId: string | null;
@@ -175,13 +182,25 @@ export function Connectors(props: ConnectorsProps): ReactElement {
               </label>
               <label className="sow-field">
                 <span className="sow-field-label">Cadence</span>
-                <input
-                  type="text"
+                {/* A choice, not a blank box (owner report 2026-09-21: "it's an open form, not a
+                    selection"). The worker accepts any non-empty expression; these are the three that
+                    mean something to a person. */}
+                <select
                   className="sow-input"
                   value={cadence}
                   onChange={(e) => setCadence(e.target.value)}
                   aria-label="Cadence"
-                />
+                  aria-describedby="sow-cadence-hint"
+                >
+                  {CADENCE_CHOICES.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+                <span id="sow-cadence-hint" className="sow-field-hint">
+                  How often a connector pulls new data in. Writing to a service does not use it.
+                </span>
               </label>
             </div>
             <p className="sow-field-hint" role="note">

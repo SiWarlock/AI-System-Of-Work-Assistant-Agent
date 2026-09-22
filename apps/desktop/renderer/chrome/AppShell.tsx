@@ -244,6 +244,16 @@ function ConnectionPill({ connection }: { readonly connection: ConnectionStatus 
  * pattern). Navigation is scope-preserving — it only selects the surface. An optional `badge`
  * renders a count pill (e.g. the pending-approvals count).
  */
+/** A gear. Replaces the circle-with-eight-rays glyph, which read as a sun (owner report 2026-09-21). */
+function GearIcon({ strokeWidth }: { readonly strokeWidth: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
 function NavLink({
   surface,
   label,
@@ -351,12 +361,16 @@ export function AppShell(props: AppShellProps): ReactElement {
           {/* Connection status pill */}
           <ConnectionPill connection={connection} />
 
-          {/* Gear / settings */}
-          <button className="sow-gear" type="button" aria-label="Settings">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="3.2" />
-              <path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6" />
-            </svg>
+          {/* Gear → Settings. ⛔ Until 2026-09-21 this had NO click handler, and its icon (a circle
+              with eight rays) read as a sun — the owner took it for a broken dark-mode toggle. */}
+          <button
+            className="sow-gear"
+            type="button"
+            aria-label="Settings"
+            aria-pressed={route.surface === "settings"}
+            onClick={() => onNavigate({ surface: "settings" })}
+          >
+            <GearIcon strokeWidth={1.6} />
           </button>
         </div>
       </header>
@@ -465,19 +479,14 @@ export function AppShell(props: AppShellProps): ReactElement {
 
           <div className="sow-nav-divider" role="separator" />
 
-          {/* Settings */}
-          <div className="sow-nav-item" role="link" tabIndex={0}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="3.2" />
-              <path d="M12 2.5v3M12 18.5v3M21.5 12h-3M5.5 12h-3M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1M18.4 18.4l-2.1-2.1M7.7 7.7L5.6 5.6" />
-            </svg>
-            <span className="sow-nav-label">Settings</span>
-            <svg className="sow-nav-chev-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M9 6l6 6-6 6" />
-            </svg>
-          </div>
+          {/* Settings. ⛔ Until 2026-09-21 this was a focusable `role="link"` with NOTHING behind it,
+              and its hint advertised "Models · Audit · Workspaces" — none of which exist. The hint now
+              names only screens the Settings page actually links to. */}
+          <NavLink surface="settings" label="Settings" active={route.surface === "settings"} onNavigate={onNavigate}>
+            <GearIcon strokeWidth={1.7} />
+          </NavLink>
           <div className="sow-nav-hint" aria-label="Settings sections">
-            Connectors · Models · Audit · Workspaces
+            Connectors · Egress
           </div>
         </nav>
 
