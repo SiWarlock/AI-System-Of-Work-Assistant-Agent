@@ -157,3 +157,47 @@ describe("resolveLinearWriteArming — the owner switch, armed only by a key tha
     expect(calls).toHaveLength(1); // the refused service never reached the network
   });
 });
+
+// Linear slice 5a (owner decision 2026-09-25): the form's team list is read from Linear ONLY when Linear writes are on
+// for that workspace. The reader is built INSIDE the armed branch, so an unarmed switch has nothing that could call.
+describe("the armed gate's team lister (Linear slice 5a)", () => {
+  const TEAMS = { data: { teams: { nodes: [{ id: "t-1", name: "Core" }], pageInfo: { hasNextPage: false } } } };
+  function recordingHttp(): HttpTransport & { calls: HttpTransportRequest[] } {
+    const calls: HttpTransportRequest[] = [];
+    return { calls, async send(r) { calls.push(r); return { status: 200, body: JSON.stringify(TEAMS) }; } };
+  }
+
+  it("an armed gate carries a lister that reads THIS workspace's teams over the same key", async () => {
+    const h = recordingHttp();
+    const out = await resolveLinearWriteArming({ enabled: true, secrets: keychainWith(["employer-work"]), workspaceIds: WORKSPACES, http: h });
+    expect(out.armed).toBe(true);
+    if (!out.armed) return;
+    expect(h.calls).toHaveLength(0); // arming reads keys, sends nothing
+    const teams = await out.gate.listLinearTeams?.("employer-work");
+    expect(teams).toEqual({ ok: true, teams: [{ id: "t-1", name: "Core" }], hasMore: false });
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0]?.headers["Authorization"]).toBe(KEY);
+  });
+
+  it("⛔ a workspace whose key did not resolve at boot is refused WITHOUT a network call or a key read", async () => {
+    const h = recordingHttp();
+    const secrets = keychainWith(["employer-work"]);
+    const out = await resolveLinearWriteArming({ enabled: true, secrets, workspaceIds: WORKSPACES, http: h });
+    if (!out.armed) throw new Error("expected armed");
+    const readsAfterArming = secrets.getSecret.mock.calls.length;
+    expect(await out.gate.listLinearTeams?.("personal-life")).toEqual({ ok: false, reason: "not_armed_for_workspace" });
+    expect(h.calls).toHaveLength(0);
+    expect(secrets.getSecret.mock.calls.length).toBe(readsAfterArming);
+  });
+
+  it("⛔ the switch off, or no key anywhere, builds NO gate — so there is no lister to call", async () => {
+    for (const deps of [
+      { enabled: false, secrets: keychainWith(WORKSPACES), workspaceIds: WORKSPACES },
+      { enabled: true, secrets: keychainWith([]), workspaceIds: WORKSPACES },
+    ]) {
+      const out = await resolveLinearWriteArming(deps);
+      expect(out.armed).toBe(false);
+      expect("gate" in out).toBe(false);
+    }
+  });
+});

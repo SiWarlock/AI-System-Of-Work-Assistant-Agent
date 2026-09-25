@@ -128,6 +128,7 @@ import {
   createInstanceLeaseStoreAdapter,
 } from "./store-adapters";
 import { createLogger, type Logger, type LogSink } from "../observability/logger";
+import type { LinearTeamsRead } from "@sow/integrations/tools/adapters/linear-teams";
 import { createOperationalBackupPorts } from "../backup/backup-ports";
 import type { OpDbBackupPort, TemporalPersistenceBackupPort } from "../backup/operational-backup";
 import { selectProviderRunner, selectHealthSources, type ProviderTransportGate } from "./provider-runner";
@@ -176,7 +177,16 @@ export interface WriteTransportGate {
    * rejected, so it must wait instead. Absent on an armed gate ⇒ every workspace. Read through {@link writeArmedFor}.
    */
   readonly workspaces?: readonly string[];
+  /**
+   * Linear slice 5a — the form's team picker. Built by `resolveLinearWriteArming` inside its ARMED branch only, over
+   * the same key and client as the sender (owner decision 2026-09-25: no Linear call while writes are off). Read
+   * through {@link linearTeamsLister}, never directly.
+   */
+  readonly listLinearTeams?: (workspaceId: string) => Promise<LinearTeamsOutcome>;
 }
+
+/** A team read, or the gate's refusal for a workspace whose Linear key did not resolve at boot. */
+export type LinearTeamsOutcome = LinearTeamsRead | { readonly ok: false; readonly reason: "not_armed_for_workspace" };
 
 /**
  * Worker-backend configuration. A tmpdir vault + an in-memory sqlite are the
@@ -838,6 +848,18 @@ export function writeArmedFor(gate?: WriteTransportGate): ArmedFor {
     targets.has(targetSystem) && (workspaces === undefined || workspaces.has(workspaceId));
 }
 
+const NOT_ARMED_FOR_TEAMS: LinearTeamsOutcome = { ok: false, reason: "not_armed_for_workspace" };
+
+/**
+ * The team lister (Linear slice 5a): the gate's own `listLinearTeams` ONLY when the gate ARMS
+ * ({@link isWriteTransportArmed}) and supplies one; every other shape yields a refusal that closes over nothing, so it
+ * cannot reach a network or read a key. ⛔ Owner decision 2026-09-25 — no Linear call while writes are off.
+ */
+export function linearTeamsLister(gate?: WriteTransportGate): (workspaceId: string) => Promise<LinearTeamsOutcome> {
+  if (isWriteTransportArmed(gate) && typeof gate?.listLinearTeams === "function") return gate.listLinearTeams;
+  return () => Promise.resolve(NOT_ARMED_FOR_TEAMS);
+}
+
 /**
  * A deterministic {@link IndexApplyClient} (the write-side GBrain index seam). It
  * ACKs every apply idempotently (per (workspaceId, revisionId)) with no duplicate
@@ -904,6 +926,8 @@ export interface ProofSpineBackends {
    * owner-approved write checks its own system AND workspace here and refuses or waits when it is `false`.
    */
   readonly armedFor: ArmedFor;
+  /** Linear slice 5a — the active workspace's Linear teams ({@link linearTeamsLister}); refuses, with no network, unless armed. */
+  readonly listLinearTeams: (workspaceId: string) => Promise<LinearTeamsOutcome>;
   /** The GBrain index client (deterministic transport). */
   readonly indexClient: IndexApplyClient;
   /** The local-provider config ALWAYS handed to the broker (never undefined). */
@@ -1041,6 +1065,7 @@ export async function assembleBackends(
     broker,
     writeAdapters,
     armedFor: writeArmedFor(config.writeTransport),
+    listLinearTeams: linearTeamsLister(config.writeTransport),
     indexClient,
     localConfig,
     now,

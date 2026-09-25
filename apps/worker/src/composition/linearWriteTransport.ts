@@ -25,8 +25,9 @@ import {
   type HttpTransportResponse,
 } from "@sow/integrations/tools/adapters/write-http-transport";
 import { LINEAR_WRITE_SPEC } from "@sow/integrations/tools/adapters/linear-write-spec";
+import { createLinearTeamsReader } from "@sow/integrations/tools/adapters/linear-teams";
 import { createRoutedAdapterTransport } from "@sow/integrations/tools/adapters/routed-transport";
-import type { WriteTransportGate } from "./backends";
+import type { WriteTransportGate, LinearTeamsOutcome } from "./backends";
 import { WELL_KNOWN_COPILOT_WORKSPACES } from "../api/procedures/copilotClaudeSynthesis";
 
 /** A write that has not answered in this long is abandoned; the gateway then holds it for retry. */
@@ -121,6 +122,12 @@ export async function resolveLinearWriteArming(deps: LinearWriteArmingDeps): Pro
     if (await linearKeyResolves(secrets, ws)) workspaces.push(ws);
   }
   if (workspaces.length === 0) return { armed: false, reason: "no_credential_resolved" };
+  // Linear slice 5a — the form's team picker, built HERE and nowhere else (owner decision 2026-09-25: no Linear call
+  // while writes are off; pinned by packages/evals/test/reachability-claim-drift.test.ts). Same key, same client
+  // kind, same guarded exchange as the sender. Constructing it reads nothing and sends nothing.
+  const readTeams = createLinearTeamsReader({ http: deps.http ?? createFetchHttpTransport(), secrets });
+  const listLinearTeams = (workspaceId: string): Promise<LinearTeamsOutcome> =>
+    workspaces.includes(workspaceId) ? readTeams(workspaceId) : Promise.resolve({ ok: false, reason: "not_armed_for_workspace" });
   return {
     armed: true,
     workspaces,
@@ -136,6 +143,7 @@ export async function resolveLinearWriteArming(deps: LinearWriteArmingDeps): Pro
         createRoutedAdapterTransport({
           linear: createWriteHttpTransport(LINEAR_WRITE_SPEC, { http: deps.http ?? createFetchHttpTransport(), secrets }),
         }),
+      listLinearTeams,
     },
   };
 }

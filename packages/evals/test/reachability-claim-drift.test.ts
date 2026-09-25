@@ -175,6 +175,18 @@ const CLAIMS: readonly Claim[] = [
     says: "the real write sender is built in exactly one production place — the Linear route in apps/worker/src/composition/linearWriteTransport.ts",
   },
   {
+    // Added 2026-09-25 (Linear slice 5a): the team list is the SECOND production use of the Linear key, and a live
+    // READ of employer Linear. Owner decision 2026-09-25: it may happen ONLY when Linear writes are on for the
+    // workspace — so the reader is built inside `resolveLinearWriteArming`'s armed branch and nowhere else. A second
+    // construction site (e.g. one fed by boot's always-present Keychain accessor) would read the key with the switch
+    // off; this row reds on it.
+    symbol: "createLinearTeamsReader",
+    sites: 2,
+    claimedAt:
+      "packages/integrations/src/tools/adapters/linear-teams.ts (header) + apps/worker/src/composition/linearWriteTransport.ts (armed branch only)",
+    says: "the Linear team reader is built in exactly one production place — the armed branch of resolveLinearWriteArming",
+  },
+  {
     // Added 2026-09-22 (Linear slice 3+4): until then the desktop host passed a no-op `dispatchApproval`, so
     // approving an external action sent nothing in every configuration. This pins the real dispatcher's ONE
     // binding (an import + a call in bootWorker), so it cannot be dropped — or bound twice — in silence.

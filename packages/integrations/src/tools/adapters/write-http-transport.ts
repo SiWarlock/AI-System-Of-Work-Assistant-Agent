@@ -74,6 +74,10 @@
 // the guard. ⚠ A sender built WITHOUT this function would not be seen (corrected 2026-09-22 — the
 // first cut of this sentence cited a row that counted `resolveLinearWriteArming` instead, which a
 // second vendor would not move). Tests here inject fakes only.
+// ⚠ AMENDED 2026-09-25 (Linear slice 5a): steps (1)–(7) are now `guardedHttpExchange`, which ALSO serves ONE read —
+// the Linear teams reader (`linear-teams.ts`, the form's team picker) — over the same key, built in the same armed
+// branch of `resolveLinearWriteArming` and nowhere else (its own row in the same drift guard). The count above is
+// unchanged: that reader does not call this function.
 import type { Result } from "@sow/contracts";
 import { isAllowedRemoteEndpoint, endpointHostRef } from "@sow/policy";
 import type {
@@ -125,14 +129,14 @@ export interface HttpTransport {
 // ── spec + deps ─────────────────────────────────────────────────────────────────
 
 /**
- * The per-vendor, DATA-ONLY configuration. `buildRequest` turns an
+ * The per-vendor, DATA-ONLY configuration of the guarded exchange. `buildRequest` turns an
  * `AdapterTransportRequest` (op + identity + payload) into the HTTP shape
- * (method/path/body) — the token-free candidate surface every write-adapter
- * specialization supplies. `mapResponse` turns the parsed 2xx body into a
- * `TransportResponse` — the vendor wire-shape candidate mapper (fail-closed
- * inside; a throw is caught by the template, never propagates).
+ * (method/path/body) — the token-free candidate surface every specialization supplies. What
+ * happens to the parsed 2xx body is the caller's: a write adapter's `mapResponse`
+ * ({@link WriteHttpSpec}) turns it into a `TransportResponse` (fail-closed inside; a throw is
+ * caught by the template, never propagates).
  */
-export interface WriteHttpSpec {
+export interface GuardedHttpSpec {
   readonly baseUrl: string;
   readonly allowedHosts: readonly string[];
   /**
@@ -160,7 +164,6 @@ export interface WriteHttpSpec {
   readonly buildRequest: (
     req: AdapterTransportRequest,
   ) => { readonly method: "GET" | "POST" | "PATCH"; readonly path: string; readonly body?: string };
-  readonly mapResponse: (status: number, json: unknown, req: AdapterTransportRequest) => TransportResponse;
   /**
    * OPTIONAL vendor declaration that a specific non-2xx reply means "try again later". Consulted
    * ONLY for a 4xx that would otherwise be the terminal `rejected`, and NEVER for 401/403 (a
@@ -171,6 +174,22 @@ export interface WriteHttpSpec {
    */
   readonly retryableBody?: (status: number, json: unknown) => boolean;
 }
+
+/**
+ * A write spec: the guarded exchange ({@link GuardedHttpSpec}) plus the vendor's single-object `mapResponse`. Every
+ * write adapter supplies one of these; {@link createWriteHttpTransport} drives it.
+ */
+export interface WriteHttpSpec extends GuardedHttpSpec {
+  readonly mapResponse: (status: number, json: unknown, req: AdapterTransportRequest) => TransportResponse;
+}
+
+/**
+ * The outcome of {@link guardedHttpExchange}: the 2xx status and its PARSED body with the redaction-safe host ref, or
+ * one of this file's redacted faults (exactly the ones the write transport returns for steps 1–7).
+ */
+export type GuardedHttpExchange =
+  | { readonly ok: true; readonly status: number; readonly json: unknown; readonly hostRef: string }
+  | Extract<TransportResponse, { readonly ok: false }>;
 
 /** The injected deps. `secrets` resolves the write-credential via the 17.4
  *  `writeSecretRef` derivation (adapter-core.ts) — never a raw token parameter. */
@@ -253,7 +272,7 @@ function statusToFault(status: number): TransportFault {
  * `statusToFault`, then the spec's narrow `retryableBody` exception (see `WriteHttpSpec`). Only a
  * would-be `rejected` non-auth 4xx is ever reconsidered, and only a literal `true` changes it.
  */
-function vendorAdjustedFault(spec: WriteHttpSpec, status: number, body: string): TransportFault {
+function vendorAdjustedFault(spec: GuardedHttpSpec, status: number, body: string): TransportFault {
   const fault = statusToFault(status);
   if (fault !== "rejected" || status === 401 || status === 403 || spec.retryableBody === undefined) return fault;
   try {
@@ -280,146 +299,162 @@ const CREDENTIAL_FAULT_DETAIL: Readonly<Record<WriteSecretUnavailableReason, Tra
  * `HttpTransport` + Keychain-backed `WriteSecretsAccessor` + a per-vendor `WriteHttpSpec`.
  */
 export function createWriteHttpTransport(spec: WriteHttpSpec, deps: WriteHttpTransportDeps): AdapterTransport {
-  const { http, secrets } = deps;
-
   return async (req: AdapterTransportRequest): Promise<TransportResponse> => {
-    // (1) Build the per-vendor request (token-free candidate). A throwing builder
-    //     fails closed BEFORE any host is known — the base url is the only safe
-    //     host reference available.
-    let built: { method: "GET" | "POST" | "PATCH"; path: string; body?: string };
-    try {
-      built = spec.buildRequest(req);
-    } catch {
-      return {
-        ok: false,
-        fault: "unknown",
-        detail: `request build error (${endpointHostRef(spec.baseUrl)})`,
-        faultDetail: "request_build_error",
-      };
-    }
-    const fullUrl = `${trimTrailingSlash(spec.baseUrl)}${built.path}`;
-    const hostRef = endpointHostRef(fullUrl); // redaction-safe host ref for faults (host only)
-
-    // (2) SSRF/egress guard FIRST — on the FINAL url (base+path), so an authority
-    //     smuggled via the path is caught, not just a misconfigured base. Off-guard
-    //     ⇒ zero token read, zero dispatch.
-    if (!isAllowedRemoteEndpoint(fullUrl, spec.allowedHosts)) {
-      return { ok: false, fault: "rejected", detail: hostRef, faultDetail: "ssrf_blocked" };
-    }
-
-    // (3) Resolve the write-credential — fail-closed on a typed-unavailable Err, a
-    //     THROWING accessor, AND a whitespace-only token (not proof of auth). The
-    //     ref itself (`keychain://…`) and the resolved value NEVER reach a fault.
-    // ⛔ RULE 4 — refuse before resolving anything when the write cannot name its workspace.
-    // `writeSecretRef` requires one so that personal and employer never share a credential; a
-    // request that has none must not fall back to an unscoped key. Zero token read, zero dispatch.
-    const reqWorkspaceId = req.workspaceId;
-    if (reqWorkspaceId === undefined || reqWorkspaceId.trim().length === 0) {
-      return {
-        ok: false,
-        fault: "rejected",
-        detail: "write credential unavailable: workspace_unscoped",
-        faultDetail: "credential_fault",
-      };
-    }
-    let secret: Result<string, WriteSecretUnavailable>;
-    try {
-      secret = await secrets.getSecret(writeSecretRef(req.targetSystem, reqWorkspaceId));
-    } catch {
-      return {
-        ok: false,
-        fault: "rejected",
-        detail: "write credential resolution faulted",
-        faultDetail: "credential_fault",
-      };
-    }
-    if (!secret.ok) {
-      return {
-        ok: false,
-        fault: "rejected",
-        detail: `write credential unavailable: ${secret.error.reason}`,
-        faultDetail: CREDENTIAL_FAULT_DETAIL[secret.error.reason],
-      };
-    }
-    if (secret.value.trim().length === 0) {
-      return {
-        ok: false,
-        fault: "rejected",
-        detail: "write credential unavailable: empty",
-        faultDetail: "credential_empty",
-      };
-    }
-
-    // (4) Build the dispatched request. The token rides ONLY the Authorization
-    //     header (never the url/body). `headers` is a FRESH object literal per
-    //     call — no injected `http` can retain/mutate a shared caller object.
-    //     `redirect` is fixed `"manual"` (see module header point 3).
-    const headers: Record<string, string> = {
-      accept: "application/json",
-      // `=== "raw"` is STRICT on purpose: an absent, misspelled or malformed `authScheme` falls to
-      // Bearer, which is what every shipped adapter already sends. See the field's own doc for why
-      // that default is about byte-equivalence and NOT about one scheme being safer.
-      Authorization: spec.authScheme === "raw" ? secret.value : `Bearer ${secret.value}`,
-      ...(built.body !== undefined ? { "content-type": "application/json" } : {}),
-    };
-    const httpRequest: HttpTransportRequest = {
-      url: fullUrl,
-      method: built.method,
-      headers,
-      redirect: "manual",
-      ...(built.body !== undefined ? { body: built.body } : {}),
-    };
-
-    // (5) Dispatch — a transport reject ⇒ a redacted fault (the raw cause is
-    //     DISCARDED, never surfaced; `"unreachable"` is the outbox-hold signal).
-    let response: HttpTransportResponse;
-    try {
-      response = await http.send(httpRequest);
-    } catch {
-      return {
-        ok: false,
-        fault: "unreachable",
-        detail: `transport error (${hostRef})`,
-        faultDetail: "transport_error",
-      };
-    }
-
-    // (6) POSITIVE 2xx gate — a non-integer / <200 / ≥300 status fails closed,
-    //     NEVER treated as success. `httpStatus` carries the same status as a
-    //     STRUCTURED numeric field (absent for a non-integer status, e.g. NaN) —
-    //     a caller branches on this, never on `detail`'s "HTTP <n>" string shape.
-    if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
-      // A non-integer status has no `httpStatus` to carry, so it is STATUSLESS in
-      // the operative sense and needs a `faultDetail` token like every other one:
-      // without it, a NaN status and a garbage 1.5 both render as the bare
-      // `"unclassified adapter fault"` — the same sentence a malformed body and a
-      // throwing `mapResponse` produce.
-      const isInteger = Number.isInteger(response.status);
-      return {
-        ok: false,
-        fault: vendorAdjustedFault(spec, response.status, response.body),
-        detail: `HTTP ${response.status}`,
-        ...(isInteger
-          ? { httpStatus: response.status }
-          : { faultDetail: "malformed_status" as const }),
-      };
-    }
-
-    // (7) Parse the 2xx body; a parse failure (including an EMPTY body — e.g. a
-    //     204) ⇒ a redacted fault, the raw body NEVER echoed.
-    let json: unknown;
-    try {
-      json = JSON.parse(response.body) as unknown;
-    } catch {
-      return { ok: false, fault: "unknown", detail: `malformed body (${hostRef})`, faultDetail: "malformed_body" };
-    }
+    const exchanged = await guardedHttpExchange(spec, deps, req);
+    if (!exchanged.ok) return exchanged;
 
     // (8) Map via the per-vendor CANDIDATE wire-mapper — wrapped so a throwing
     //     mapper's content can never escape this template unredacted.
     try {
-      return spec.mapResponse(response.status, json, req);
+      return spec.mapResponse(exchanged.status, exchanged.json, req);
     } catch {
-      return { ok: false, fault: "unknown", detail: `map error (${hostRef})`, faultDetail: "map_error" };
+      return { ok: false, fault: "unknown", detail: `map error (${exchanged.hostRef})`, faultDetail: "map_error" };
     }
   };
+}
+
+/**
+ * Steps (1)–(7) of the write transport — the SSRF guard on the final url, the workspace-scoped credential read that
+ * fails closed, the header-only token, `redirect: "manual"`, the dispatch, the positive-2xx gate and the parse —
+ * returning the parsed 2xx body instead of mapping it. EXTRACTED (Linear slice 5a), not forked (`integrations L43`):
+ * {@link createWriteHttpTransport} is exactly this plus step (8), and the Linear TEAMS reader
+ * (`linear-teams.ts`) is exactly this plus its own list mapping, so both ride ONE guarded pipeline. Never throws.
+ */
+export async function guardedHttpExchange(
+  spec: GuardedHttpSpec,
+  deps: WriteHttpTransportDeps,
+  req: AdapterTransportRequest,
+): Promise<GuardedHttpExchange> {
+  const { http, secrets } = deps;
+  // (1) Build the per-vendor request (token-free candidate). A throwing builder
+  //     fails closed BEFORE any host is known — the base url is the only safe
+  //     host reference available.
+  let built: { method: "GET" | "POST" | "PATCH"; path: string; body?: string };
+  try {
+    built = spec.buildRequest(req);
+  } catch {
+    return {
+      ok: false,
+      fault: "unknown",
+      detail: `request build error (${endpointHostRef(spec.baseUrl)})`,
+      faultDetail: "request_build_error",
+    };
+  }
+  const fullUrl = `${trimTrailingSlash(spec.baseUrl)}${built.path}`;
+  const hostRef = endpointHostRef(fullUrl); // redaction-safe host ref for faults (host only)
+
+  // (2) SSRF/egress guard FIRST — on the FINAL url (base+path), so an authority
+  //     smuggled via the path is caught, not just a misconfigured base. Off-guard
+  //     ⇒ zero token read, zero dispatch.
+  if (!isAllowedRemoteEndpoint(fullUrl, spec.allowedHosts)) {
+    return { ok: false, fault: "rejected", detail: hostRef, faultDetail: "ssrf_blocked" };
+  }
+
+  // (3) Resolve the write-credential — fail-closed on a typed-unavailable Err, a
+  //     THROWING accessor, AND a whitespace-only token (not proof of auth). The
+  //     ref itself (`keychain://…`) and the resolved value NEVER reach a fault.
+  // ⛔ RULE 4 — refuse before resolving anything when the write cannot name its workspace.
+  // `writeSecretRef` requires one so that personal and employer never share a credential; a
+  // request that has none must not fall back to an unscoped key. Zero token read, zero dispatch.
+  const reqWorkspaceId = req.workspaceId;
+  if (reqWorkspaceId === undefined || reqWorkspaceId.trim().length === 0) {
+    return {
+      ok: false,
+      fault: "rejected",
+      detail: "write credential unavailable: workspace_unscoped",
+      faultDetail: "credential_fault",
+    };
+  }
+  let secret: Result<string, WriteSecretUnavailable>;
+  try {
+    secret = await secrets.getSecret(writeSecretRef(req.targetSystem, reqWorkspaceId));
+  } catch {
+    return {
+      ok: false,
+      fault: "rejected",
+      detail: "write credential resolution faulted",
+      faultDetail: "credential_fault",
+    };
+  }
+  if (!secret.ok) {
+    return {
+      ok: false,
+      fault: "rejected",
+      detail: `write credential unavailable: ${secret.error.reason}`,
+      faultDetail: CREDENTIAL_FAULT_DETAIL[secret.error.reason],
+    };
+  }
+  if (secret.value.trim().length === 0) {
+    return {
+      ok: false,
+      fault: "rejected",
+      detail: "write credential unavailable: empty",
+      faultDetail: "credential_empty",
+    };
+  }
+
+  // (4) Build the dispatched request. The token rides ONLY the Authorization
+  //     header (never the url/body). `headers` is a FRESH object literal per
+  //     call — no injected `http` can retain/mutate a shared caller object.
+  //     `redirect` is fixed `"manual"` (see module header point 3).
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    // `=== "raw"` is STRICT on purpose: an absent, misspelled or malformed `authScheme` falls to
+    // Bearer, which is what every shipped adapter already sends. See the field's own doc for why
+    // that default is about byte-equivalence and NOT about one scheme being safer.
+    Authorization: spec.authScheme === "raw" ? secret.value : `Bearer ${secret.value}`,
+    ...(built.body !== undefined ? { "content-type": "application/json" } : {}),
+  };
+  const httpRequest: HttpTransportRequest = {
+    url: fullUrl,
+    method: built.method,
+    headers,
+    redirect: "manual",
+    ...(built.body !== undefined ? { body: built.body } : {}),
+  };
+
+  // (5) Dispatch — a transport reject ⇒ a redacted fault (the raw cause is
+  //     DISCARDED, never surfaced; `"unreachable"` is the outbox-hold signal).
+  let response: HttpTransportResponse;
+  try {
+    response = await http.send(httpRequest);
+  } catch {
+    return {
+      ok: false,
+      fault: "unreachable",
+      detail: `transport error (${hostRef})`,
+      faultDetail: "transport_error",
+    };
+  }
+
+  // (6) POSITIVE 2xx gate — a non-integer / <200 / ≥300 status fails closed,
+  //     NEVER treated as success. `httpStatus` carries the same status as a
+  //     STRUCTURED numeric field (absent for a non-integer status, e.g. NaN) —
+  //     a caller branches on this, never on `detail`'s "HTTP <n>" string shape.
+  if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
+    // A non-integer status has no `httpStatus` to carry, so it is STATUSLESS in
+    // the operative sense and needs a `faultDetail` token like every other one:
+    // without it, a NaN status and a garbage 1.5 both render as the bare
+    // `"unclassified adapter fault"` — the same sentence a malformed body and a
+    // throwing `mapResponse` produce.
+    const isInteger = Number.isInteger(response.status);
+    return {
+      ok: false,
+      fault: vendorAdjustedFault(spec, response.status, response.body),
+      detail: `HTTP ${response.status}`,
+      ...(isInteger
+        ? { httpStatus: response.status }
+        : { faultDetail: "malformed_status" as const }),
+    };
+  }
+
+  // (7) Parse the 2xx body; a parse failure (including an EMPTY body — e.g. a
+  //     204) ⇒ a redacted fault, the raw body NEVER echoed.
+  let json: unknown;
+  try {
+    json = JSON.parse(response.body) as unknown;
+  } catch {
+    return { ok: false, fault: "unknown", detail: `malformed body (${hostRef})`, faultDetail: "malformed_body" };
+  }
+  return { ok: true, status: response.status, json, hostRef };
 }

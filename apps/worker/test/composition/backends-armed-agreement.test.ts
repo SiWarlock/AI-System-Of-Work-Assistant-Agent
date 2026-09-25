@@ -8,7 +8,7 @@
 // body), so this test is what keeps them in step — malformed input included.
 import { describe, it, expect } from "vitest";
 import type { AdapterTransport } from "@sow/integrations";
-import { writeArmedFor, isWriteTransportArmed, selectAdapterTransport, type WriteTransportGate } from "../../src/composition/backends";
+import { writeArmedFor, isWriteTransportArmed, selectAdapterTransport, linearTeamsLister, type WriteTransportGate } from "../../src/composition/backends";
 import { TargetSystem } from "@sow/contracts";
 
 const REAL: AdapterTransport = () => Promise.resolve({ ok: true, object: null });
@@ -56,5 +56,32 @@ describe("writeArmedFor — does THIS system in THIS workspace have a REAL sende
   it("is every system in every workspace when an armed gate declares neither (a test's fake sender serves all)", () => {
     const armed = writeArmedFor({ enabled: true, make });
     for (const t of TargetSystem) for (const w of WS) expect(armed(t, w)).toBe(true);
+  });
+});
+
+// Linear slice 5a — the team lister backends exposes. ⛔ Owner decision 2026-09-25: no Linear network call while writes
+// are off. Whatever the gate looks like, anything but an ARMED gate with its own lister yields a refusal that closes
+// over nothing — it cannot reach a network.
+describe("linearTeamsLister — the gate's own lister when armed, otherwise a refusal with no network", () => {
+  const lister = async (): Promise<{ ok: true; teams: { id: string; name: string }[]; hasMore: boolean }> => ({ ok: true, teams: [], hasMore: false });
+
+  it("is the gate's lister only when the gate ARMS and supplies one", async () => {
+    const armed = { enabled: true, make, targets: ["linear"] as const, workspaces: ["employer-work"], listLinearTeams: lister } as WriteTransportGate;
+    expect(linearTeamsLister(armed)).toBe(lister);
+  });
+
+  it("⛔ every other gate shape — unset, off, malformed, armed without a lister, or a lister on an OFF gate — refuses", async () => {
+    const shapes: (WriteTransportGate | undefined)[] = [
+      ...GATES.map(([, g]) => g),
+      { enabled: false, make, listLinearTeams: lister } as WriteTransportGate,
+      { enabled: "true" as unknown as boolean, make, listLinearTeams: lister } as WriteTransportGate,
+      { enabled: true, listLinearTeams: lister } as WriteTransportGate, // no make ⇒ not armed
+    ];
+    for (const g of shapes) {
+      const l = linearTeamsLister(g);
+      if (g !== undefined && isWriteTransportArmed(g) && g.listLinearTeams !== undefined) continue;
+      expect(l).not.toBe(lister);
+      expect(await l("employer-work")).toEqual({ ok: false, reason: "not_armed_for_workspace" });
+    }
   });
 });
