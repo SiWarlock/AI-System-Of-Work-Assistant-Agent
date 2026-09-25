@@ -125,6 +125,14 @@ describe("review follow-ups (2026-09-22) — the payload sent is the payload app
     const res = await portFor(b).detail({ workspaceId: String(WS), approvalId: String(card.id) });
     expect(res.ok && res.value.priority).toBe(2);
   });
+
+  it("shows the TEAM by name (Linear slice 5a) — the owner sees where the issue goes; never the team id", async () => {
+    const b = await backends(open);
+    const card = await propose(b, "team", { payload: { teamId: "t-SECRET-ID", teamName: "Core Platform" } });
+    const res = await portFor(b).detail({ workspaceId: String(WS), approvalId: String(card.id) });
+    expect(res.ok && res.value.teamName).toBe("Core Platform");
+    expect(JSON.stringify(res)).not.toContain("t-SECRET-ID");
+  });
 });
 
 describe("unsent — approved external cards whose write has not gone out", () => {

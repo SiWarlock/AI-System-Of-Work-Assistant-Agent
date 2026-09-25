@@ -48,16 +48,19 @@ async function ownCard(deps: ApprovalSendPortDeps, input: ApprovalRefInput): Pro
 /**
  * The action's own content for its details — only for Linear, and only when the saved action is provably this
  * card's (same workspace, same id, and a payload that re-hashes to the approved hash). Linear's write sends
- * `title`, `description`, `priority` and `teamId` (linear-write-spec.ts); the first three are shown. ⚠ The TEAM is
- * NOT shown yet — there is no team-name source until the team picker (slice 5), and a raw team id tells the owner
- * nothing. Corrected 2026-09-22 (review): this used to claim Linear sends "exactly title and description".
+ * `title`, `description`, `priority` and `teamId` (linear-write-spec.ts); the first three are shown, and the team by
+ * its NAME (`teamName`, saved by the form's proposer from the list it read — Linear slice 5a). ⚠ A card proposed any
+ * other way (the Copilot) carries no `teamName` yet, so its team is not shown; a raw team id tells the owner nothing.
+ * Corrected 2026-09-22 (review): this used to claim Linear sends "exactly title and description". Amended 2026-09-25.
  */
-function contentOf(check: SavedActionCheck): { title?: unknown; description?: unknown; priority?: unknown } {
+function contentOf(check: SavedActionCheck): { title?: unknown; description?: unknown; priority?: unknown; teamName?: unknown } {
   if (check.kind !== "verified" || check.entry.targetSystem !== "linear") return {};
   const payload = check.entry.payload;
   if (typeof payload !== "object" || payload === null) return {};
   const p = payload as Record<string, unknown>;
-  return { title: p["title"], description: p["description"], priority: p["priority"] };
+  // `teamName` (Linear slice 5a): the form's proposer saves the team's NAME, read from that workspace's Linear.
+  // The team id is never read here — it is what is sent, not what the owner reads.
+  return { title: p["title"], description: p["description"], priority: p["priority"], teamName: p["teamName"] };
 }
 
 export function createApprovalSendPort(deps: ApprovalSendPortDeps): ApprovalSendPort {

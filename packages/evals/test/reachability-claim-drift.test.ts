@@ -196,6 +196,14 @@ const CLAIMS: readonly Claim[] = [
     says: "bootWorker binds the REAL guarded external-approval dispatcher when the host supplies no override",
   },
   {
+    // Added 2026-09-25 (Linear slice 5a): the Linear issue form's port. Absent from boot, the API mounts the fail-closed
+    // UNAVAILABLE port and the form can neither list teams nor propose — silently.
+    symbol: "createLinearIssuePort",
+    sites: 2,
+    claimedAt: "apps/worker/src/boot.ts (linearIssue binding) + apps/worker/src/api/server.ts (mounted under linearIssue)",
+    says: "bootWorker binds the real Linear issue form port (one import + one call) and passes it to the API server",
+  },
+  {
     // Added 2026-09-22 (Linear slice 3+4, step 4d): the Approvals screen's details / unsent / Send-now surface.
     // Absent from boot, the API mounts the fail-closed UNAVAILABLE port and the screen shows nothing — silently.
     symbol: "createApprovalSendPort",

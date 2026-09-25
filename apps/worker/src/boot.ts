@@ -218,6 +218,8 @@ import {
 } from "./composition/externalApprovalDispatch";
 import { createApprovalSendPort } from "./composition/approvalSend";
 import type { ApprovalSendPort } from "./api/procedures/approvalSend";
+import { createLinearIssuePort, LINEAR_FORM_ACTOR } from "./composition/linearIssue";
+import type { LinearIssuePort } from "./api/procedures/linearIssue";
 import { provisionDevWorkspace, type DevProvisionSpec } from "./composition/provisionDev";
 import { maybeSeedDemoData } from "./composition/demoSeed";
 import {
@@ -4121,6 +4123,24 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     armedFor: backends.armedFor,
     ...(config.dispatchApproval === undefined ? { sender: externalApprovalSender } : {}),
   });
+  // Linear slice 5a — the Linear issue FORM on the Approvals page. It gets its OWN approvals sink, built here at the
+  // top level: the Copilot's sink exists only inside the agent-mode factory. The card records the owner's form as its
+  // actor (never "copilot-agent"). Owner decision 2026-09-25: the team list is read only while Linear writes are armed
+  // for the workspace — the port checks `armedFor` first, and `backends.listLinearTeams` refuses with no network
+  // otherwise. A proposal is a PENDING card; approving it is the existing guarded dispatch above.
+  const linearIssue: LinearIssuePort = createLinearIssuePort({
+    workspaceConfig: backends.repos.workspaceConfig,
+    approvals: backends.repos.approvals,
+    armedFor: backends.armedFor,
+    listLinearTeams: backends.listLinearTeams,
+    sink: createApprovalsProposeSink({
+      approvals: backends.repos.approvals,
+      workspaceConfig: backends.repos.workspaceConfig,
+      outbox: backends.repos.outbox,
+      now: backends.now,
+      actor: LINEAR_FORM_ACTOR,
+    }),
+  });
   const dispatchApproval: DispatchApprovalFn =
     proofSpineParams !== undefined
       ? createApprovalDispatchRouter({
@@ -4205,6 +4225,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     crossWorkspaceLink,
     egressCommand,
     approvalSend,
+    linearIssue,
     now: backends.now,
     ...(config.apiHost !== undefined ? { host: config.apiHost } : {}),
     ...(config.apiPort !== undefined ? { port: config.apiPort } : {}),

@@ -52,6 +52,11 @@ import {
   type ApprovalSendPort,
 } from "./procedures/approvalSend";
 import {
+  buildLinearIssueRouter,
+  UNAVAILABLE_LINEAR_ISSUE_PORT,
+  type LinearIssuePort,
+} from "./procedures/linearIssue";
+import {
   buildOnboardingRouter,
   type OnboardingCommandPort,
 } from "./procedures/onboarding";
@@ -116,6 +121,11 @@ export interface ApiServerDeps {
    * "Send now". Optional: absent ⇒ every call fails closed as unavailable (never a faked state or send).
    */
   readonly approvalSend?: ApprovalSendPort;
+  /**
+   * The Linear issue form on the Approvals page (Linear slice 5a): the active workspace's teams, and proposing an
+   * issue as a PENDING card. Optional: absent ⇒ every call fails closed as unavailable (never a faked team or card).
+   */
+  readonly linearIssue?: LinearIssuePort;
   readonly streamPublisherOptions?: StreamPublisherOptions;
 }
 
@@ -149,6 +159,7 @@ function composeAppRouter(deps: ApiServerDeps, pushStream: PushStream) {
     crossWorkspaceLink: buildCrossWorkspaceLinkRouter({ crossWorkspaceLink: deps.crossWorkspaceLink }),
     egressCommand: buildEgressCommandRouter({ egressCommand: deps.egressCommand }),
     approvalSend: buildApprovalSendRouter({ approvalSend: deps.approvalSend ?? UNAVAILABLE_APPROVAL_SEND_PORT }),
+    linearIssue: buildLinearIssueRouter({ linearIssue: deps.linearIssue ?? UNAVAILABLE_LINEAR_ISSUE_PORT }),
     presetProfiles: buildPresetProfilesRouter(),
     stream: pushStream.router,
   });
