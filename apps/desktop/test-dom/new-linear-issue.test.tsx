@@ -221,7 +221,7 @@ describe("proposing", () => {
       ["invalid_input", /Check the title and description/],
       ["writes_off", /Linear writes are off for this workspace/],
       ["unknown_team", /That team is no longer in Linear/],
-      ["conflict", /already sent with different content/],
+      ["conflict", /no longer matches.*check your approvals first/],
       ["already_decided", /already proposed, and that card has been decided/],
       ["unavailable", /Couldn't create the proposal — try again/],
     ];
@@ -249,6 +249,17 @@ describe("proposing", () => {
     await act(async () => {});
     const ids = p.onProposeLinearIssue.mock.calls.map((c) => (c[0] as LinearIssueDraft).draftId);
     expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it("a proposal whose card could not be read back never says 'approve it below' — it says where it will show", async () => {
+    const p = page({ propose: async () => ({ ok: true, result: { outcome: "created" } }) });
+    render(p.ui);
+    const form = await openForm();
+    fill(form, "Fix it");
+    fireEvent.click(submitButton(form));
+    await act(async () => {});
+    expect(screen.getByText(/Proposed\. It will show in your approvals after a refresh/)).toBeTruthy();
+    expect(screen.queryByText(/approve it below/i)).toBeNull();
   });
 
   it("'Approve it below' disappears once that card is no longer pending", async () => {

@@ -115,11 +115,16 @@ export function createLinearIssuePort(deps: LinearIssuePortDeps): LinearIssuePor
         return ok({ outcome: "unavailable" });
       }
       const card = await readBack(deps, proposed.value.approvalRef);
-      // A re-submitted draft whose card has since been DECIDED (approved, rejected, expired…) is not "pending": the
-      // sink answers created:false for any status, so the status is read here (slice-5a review). No card is returned.
-      if (!proposed.value.created && card !== undefined && card.status !== "pending") return ok({ outcome: "already_decided" });
-      const outcome = proposed.value.created ? "created" : "already_pending";
-      return ok(toUiSafeLinearProposalResult(card !== undefined ? { outcome, approval: card } : { outcome }));
+      if (!proposed.value.created) {
+        // A re-submitted draft: the sink answers created:false for a card in ANY state, so its status is read here.
+        // Unreadable ⇒ "unavailable" (its status is unknown — never a guessed "pending"; critic, measured). Decided
+        // (approved, rejected, expired…) ⇒ "already_decided", with no card (slice-5a review).
+        if (card === undefined) return ok({ outcome: "unavailable" });
+        if (card.status !== "pending") return ok({ outcome: "already_decided" });
+        return ok(toUiSafeLinearProposalResult({ outcome: "already_pending", approval: card }));
+      }
+      // Just created, so pending. If it cannot be read back, the outcome still stands, without a card.
+      return ok(toUiSafeLinearProposalResult(card !== undefined ? { outcome: "created", approval: card } : { outcome: "created" }));
     },
   };
 }

@@ -26,6 +26,8 @@ const PRIORITIES: readonly (readonly [number, string])[] = [
 ];
 const DONE_CREATED = "Proposed. Approve it below to send it to Linear.";
 const DONE_ALREADY = "Already proposed. Approve it below to send it to Linear.";
+/** When the worker could not return the new card, nothing is "below" yet: say where it will show instead. */
+const DONE_NO_CARD = "Proposed. It will show in your approvals after a refresh.";
 const FAILED = "Couldn't create the proposal — try again";
 
 /**
@@ -52,7 +54,10 @@ export interface NewLinearIssueProps {
   readonly onLoadTeams: () => Promise<LinearTeamsResult>;
   /** Propose one issue in the active workspace; the App folds the returned card into the inbox. */
   readonly onPropose: (draft: LinearIssueDraft) => Promise<ProposeLinearIssueResult>;
-  /** The ids of the cards still pending — "approve it below" is said only while the proposed card is one of them. */
+  /**
+   * The ids of the cards still pending. A proposal that returned its card says "approve it below" only while that card
+   * is one of them; one that did not (the worker could not read it back) never says "below" at all.
+   */
   readonly pendingIds: readonly string[];
 }
 
@@ -132,14 +137,20 @@ export function NewLinearIssue({ onLoadTeams, onPropose, pendingIds }: NewLinear
           setDescription("");
           setPriority(0);
           setOpen(false);
-          setDone({
-            text: r.result.outcome === "created" ? DONE_CREATED : DONE_ALREADY,
-            ...(r.result.approval !== undefined ? { cardId: r.result.approval.id } : {}),
-          });
+          setDone(
+            r.result.approval !== undefined
+              ? { text: r.result.outcome === "created" ? DONE_CREATED : DONE_ALREADY, cardId: r.result.approval.id }
+              : { text: DONE_NO_CARD },
+          );
           return;
         case "conflict":
-          draft.current = newDraftId(); // this draft was already sent with other content; the next submit is new
-          setMessage("This form was already sent with different content. Submit again to propose it as a new issue.");
+          // The draft was already sent and what was saved differs — the content, or (rarely) the team's NAME, renamed
+          // in Linear between a lost answer and this retry. Both are real; so is the risk of a second card for the same
+          // issue, which is why the message says to look first (critic, 2026-09-25; recorded as a known limit).
+          draft.current = newDraftId();
+          setMessage(
+            "This form was already sent, and what was saved no longer matches it (its content, or the team's name in Linear, changed). Submitting again proposes a NEW issue — check your approvals first.",
+          );
           return;
         case "already_decided":
           draft.current = newDraftId(); // spent: its card was decided; the next submit is a new issue
@@ -167,7 +178,7 @@ export function NewLinearIssue({ onLoadTeams, onPropose, pendingIds }: NewLinear
         <button type="button" className="sow-approval-btn" aria-expanded={open} aria-controls={FORM_ID} onClick={toggle}>
           New Linear issue
         </button>
-        {/* "Approve it below" only while the proposed card IS below (still pending) — slice-5a review. */}
+        {/* A card-bearing confirmation shows only while that card is still pending; one without a card never says "below". */}
         {done !== undefined && (done.cardId === undefined || pendingIds.includes(done.cardId)) ? (
           <span className="sow-newissue-done" role="status">
             {done.text}

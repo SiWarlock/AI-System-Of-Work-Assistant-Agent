@@ -197,6 +197,12 @@ describe("propose — one Linear issue from the form, as a PENDING card that sti
     expect(s.calls).toHaveLength(0);
   });
 
+  it("⛔ a re-submitted draft whose card cannot be read back is 'unavailable' — never a guessed 'already_pending'", async () => {
+    // The sink answers created:false for a card in ANY state, so without the card its status is unknown (critic, measured).
+    const { p } = port({ sink: sink(() => ok({ approvalRef: "idem_new", created: false })), approvals: approvalsRepo(undefined) });
+    expect(await p.propose(FORM)).toEqual(ok({ outcome: "unavailable" }));
+  });
+
   it("a card that was created but cannot be read back still reports the outcome, without a card", async () => {
     const { p } = port({ approvals: approvalsRepo(undefined) });
     expect(await p.propose(FORM)).toEqual(ok({ outcome: "created" }));
