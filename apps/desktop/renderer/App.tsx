@@ -181,7 +181,7 @@ export function App(): ReactElement {
     return handle.decideApproval(approvalId, decision).then((r) => {
       if (!r.ok) return r.reason;
       // An approval may now be a card that was NOT sent (e.g. writes off). The fold changes the approved set, which
-      // refreshes the Not sent list (the effect below) — the same path an approval from Telegram takes.
+      // refreshes the Not sent list (the effect below).
       store.dispatch((s) => hydrateApprovals(s, [r.approval]));
       return r.applied ? "applied" : "already_resolved";
     });
@@ -225,8 +225,10 @@ export function App(): ReactElement {
     });
   };
   const onApprovalsSurface = state.route.surface === "approvals";
-  // An approval from ANY path (this screen, Telegram over the push stream, a retry that finds it already approved)
-  // can leave a write not sent, so the list also refreshes whenever the set of approved cards changes.
+  // Any change to the set of approved cards in the store (this screen's decision, a retry that finds it already
+  // approved, a record folded in from any other source) can leave a write not sent, so the list refreshes on it.
+  // ⚠ The worker publishes NO approval.update events today (nothing calls publishApproval, measured 2026-09-25), so
+  // an approval made elsewhere (e.g. Telegram) reaches this store only on the next cold load or scope change.
   const approvedKey = [...state.approvals.values()]
     .filter((a) => a.status === "approved")
     .map((a) => a.id)

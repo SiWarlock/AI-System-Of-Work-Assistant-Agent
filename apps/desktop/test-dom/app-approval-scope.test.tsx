@@ -244,7 +244,7 @@ describe("App — the send surface is asked about the ACTIVE scope's onboarded w
     expect((within(li).getByRole("button", { name: "Send now" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("an approval that arrives from elsewhere (e.g. Telegram, over the push stream) refreshes the list", async () => {
+  it("any approved card folded into the store (from any source) refreshes the list", async () => {
     render(<App />);
     await tick();
     asked.length = 0;
