@@ -199,7 +199,9 @@ export function App(): ReactElement {
     readonly workspaceId: string | null;
     readonly approvals: readonly UiSafeApproval[];
     readonly loadFailed: boolean;
-  }>({ workspaceId: null, approvals: [], loadFailed: false });
+    /** Cards the worker confirmed SENT since the last good load: they read as sent across a remount until it reloads. */
+    readonly sentIds: readonly string[];
+  }>({ workspaceId: null, approvals: [], loadFailed: false, sentIds: [] });
   const unsentSeq = useRef(0);
   const refreshUnsent = (): void => {
     const workspaceId = resolveOnboardedWorkspaceId(store.getSnapshot(), store.getSnapshot().scope);
@@ -208,16 +210,18 @@ export function App(): ReactElement {
     const seq = ++unsentSeq.current;
     void handle.unsentApprovals(workspaceId).then((r) => {
       // Only the NEWEST request writes: an older answer that arrives last would put back a card that has since been
-      // sent. And only while its scope is still the active one.
+      // sent. (A late answer for a previous scope is also dropped here, because a scope change starts a new request;
+      // one that lands while no workspace is active is hidden by the workspace filters where the list is rendered.)
       if (seq !== unsentSeq.current) return;
-      if (resolveOnboardedWorkspaceId(store.getSnapshot(), store.getSnapshot().scope) !== workspaceId) return;
       if (!r.ok) {
-        // Keep a list already shown for this workspace (a stale list beats a wrong one); with none, SAY it failed —
-        // an empty list would read as "everything was sent".
-        setUnsent((prev) => (prev.workspaceId === workspaceId ? prev : { workspaceId, approvals: [], loadFailed: true }));
+        // SAY it failed, always: an empty or old list would otherwise read as "everything was sent". Keep the last
+        // good list for this workspace on screen (a stale list beats a wrong one).
+        setUnsent((prev) =>
+          prev.workspaceId === workspaceId ? { ...prev, loadFailed: true } : { workspaceId, approvals: [], loadFailed: true, sentIds: [] },
+        );
         return;
       }
-      setUnsent({ workspaceId, approvals: r.approvals, loadFailed: false });
+      setUnsent({ workspaceId, approvals: r.approvals, loadFailed: false, sentIds: [] });
     });
   };
   const onApprovalsSurface = state.route.surface === "approvals";
@@ -241,8 +245,15 @@ export function App(): ReactElement {
     const handle = liveRef.current;
     if (activeWorkspaceId === null || handle === null) return Promise.resolve({ ok: false });
     // No list refresh here: the card keeps the worker's re-read state on screen (a sent card would otherwise
-    // vanish with its "Sent" line). It leaves the list at the next refresh.
-    return handle.sendNow(activeWorkspaceId, approvalId);
+    // vanish with its "Sent" line). A SENT result is remembered here, not only in the card, so the card still reads
+    // as sent after a remount (leaving the page, a scope switch) until the next good load drops it.
+    const workspaceId = activeWorkspaceId;
+    return handle.sendNow(workspaceId, approvalId).then((r) => {
+      if (r.ok && r.result.sendState === "sent") {
+        setUnsent((prev) => (prev.workspaceId === workspaceId ? { ...prev, sentIds: [...prev.sentIds, approvalId] } : prev));
+      }
+      return r;
+    });
   };
 
   // §9.7 triage disposition: REQUEST the worker's replay-safe pipeline re-entry (deterministic
@@ -409,6 +420,7 @@ export function App(): ReactElement {
           // scope is never shown, nor a row the worker should not have returned.
           unsent={unsent.workspaceId === activeWorkspaceId ? unsent.approvals.filter((a) => a.workspaceId === activeWorkspaceId) : []}
           unsentLoadFailed={unsent.workspaceId === activeWorkspaceId && unsent.loadFailed}
+          sentApprovalIds={unsent.workspaceId === activeWorkspaceId ? unsent.sentIds : []}
           onSendNow={hasLiveWorker ? onSendNow : undefined}
         />
       ) : state.route.surface === "ingestion" ? (

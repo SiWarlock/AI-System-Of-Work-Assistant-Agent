@@ -63,8 +63,10 @@ export interface ApprovalsProps {
   readonly onOpenDetail?: (approvalId: string) => Promise<ApprovalDetailResult>;
   /** The active workspace's approved external cards whose write has not gone out. */
   readonly unsent?: readonly UiSafeApproval[];
-  /** The list could not be loaded for the active workspace and there is none to show: the screen says so. */
+  /** The latest load of the list failed. The screen says so; any list shown is from the last good load. */
   readonly unsentLoadFailed?: boolean;
+  /** Cards the worker confirmed SENT since the list was last loaded: they read as sent until the next load drops them. */
+  readonly sentApprovalIds?: readonly string[];
   /** Re-run the guarded dispatch for one approved card. Absent (no live worker) ⇒ the button is disabled. */
   readonly onSendNow?: (approvalId: string) => Promise<SendNowResult>;
 }
@@ -260,19 +262,22 @@ function DetailsDisclosure({
  * disclosure, and "Send now", which re-runs the SAME guarded dispatch. Send now does nothing while a send is in
  * flight (the button is disabled, and a ref catches a second click that lands before the re-render), when there is
  * no live worker, and once the write is sent. The result line is the worker's re-read state, never a guess, and a
- * send closes an open Details panel so it never shows the state from before the send. ⚠ The screen guards are
- * per mount (a scope switch remounts the card); the rule-3 guard is the worker's single-flight sender.
+ * send closes an open Details panel so it never shows the state from before the send. A SENT result also comes from
+ * the App (`alreadySent`), so it survives a remount. ⚠ The in-flight guard is per mount (leaving the page or a scope
+ * switch remounts the card); the rule-3 guard is the worker's single-flight sender.
  */
 function UnsentCard({
   approval,
   activeWorkspaceId,
   onOpenDetail,
   onSendNow,
+  alreadySent,
 }: {
   readonly approval: UiSafeApproval;
   readonly activeWorkspaceId: string | null | undefined;
   readonly onOpenDetail?: (approvalId: string) => Promise<ApprovalDetailResult>;
   readonly onSendNow?: (approvalId: string) => Promise<SendNowResult>;
+  readonly alreadySent?: boolean;
 }): ReactElement {
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<{ readonly label: string; readonly sent: boolean } | undefined>(undefined);
@@ -285,7 +290,8 @@ function UnsentCard({
       alive.current = false;
     };
   }, []);
-  const sent = result?.sent === true;
+  const sent = alreadySent === true || result?.sent === true;
+  const resultLabel = result?.label ?? (alreadySent === true ? sendStateLabel("sent", approval.targetSystem) : undefined);
   const send = (): void => {
     if (onSendNow === undefined || inFlight.current || sent) return;
     inFlight.current = true;
@@ -325,9 +331,9 @@ function UnsentCard({
           Send now
         </button>
       </div>
-      {result !== undefined ? (
+      {resultLabel !== undefined ? (
         <div className="sow-approval-sendstate" role="status">
-          {result.label}
+          {resultLabel}
         </div>
       ) : null}
     </li>
@@ -492,7 +498,17 @@ function SnoozedCard({
 }
 
 export function Approvals(props: ApprovalsProps): ReactElement {
-  const { approvals, onDecide, focusedApprovalId, activeWorkspaceId, onOpenDetail, unsent = [], unsentLoadFailed = false, onSendNow } = props;
+  const {
+    approvals,
+    onDecide,
+    focusedApprovalId,
+    activeWorkspaceId,
+    onOpenDetail,
+    unsent = [],
+    unsentLoadFailed = false,
+    sentApprovalIds = [],
+    onSendNow,
+  } = props;
   // Cards are keyed by the ACTIVE workspace too, so a scope change remounts them: every open detail is cleared and
   // a late answer for the old scope is dropped (WS-8 — no employer content lingers under a personal scope).
   const scopeKey = activeWorkspaceId ?? "global";
@@ -563,6 +579,7 @@ export function Approvals(props: ApprovalsProps): ReactElement {
                 activeWorkspaceId={activeWorkspaceId}
                 onOpenDetail={onOpenDetail}
                 onSendNow={onSendNow}
+                alreadySent={sentApprovalIds.includes(a.id)}
               />
             ))}
           </ul>

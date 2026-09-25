@@ -25,10 +25,11 @@ type UnsentAnswer = { ok: true; approvals: UiSafeApproval[] } | { ok: false };
 const LIFE = "wk-life-3";
 const EMP = "wk-emp-7";
 
-const { asked, storeRef, ctl } = vi.hoisted(() => ({
+const { asked, storeRef, ctl, sendState } = vi.hoisted(() => ({
   asked: [] as { call: string; workspaceId: string }[],
   storeRef: { current: null as unknown },
   ctl: { unsent: null as null | ((workspaceId: string) => Promise<unknown>) },
+  sendState: { value: "writes_off" as string },
 }));
 
 const lifeCard: UiSafeApproval = {
@@ -76,7 +77,7 @@ vi.mock("../renderer/lib/live", async (importOriginal) => {
     },
     sendNow: async (workspaceId: string, approvalId: string) => {
       asked.push({ call: "sendNow", workspaceId });
-      return { ok: true, result: { approvalId, sendState: "writes_off" } };
+      return { ok: true, result: { approvalId, sendState: sendState.value } };
     },
   } as unknown as StartLiveHandle;
   return {
@@ -99,7 +100,7 @@ vi.mock("../renderer/lib/live", async (importOriginal) => {
 });
 
 import { App } from "../renderer/App";
-import { setScope, hydrateApprovals } from "../renderer/store/projections";
+import { setScope, hydrateApprovals, navigate } from "../renderer/store/projections";
 
 const tick = (): Promise<void> => act(async () => {
   await new Promise((r) => setTimeout(r, 0));
@@ -119,6 +120,7 @@ const notSent = (): HTMLElement | null => screen.queryByText("Not sent")?.parent
 beforeEach(() => {
   asked.length = 0;
   ctl.unsent = null;
+  sendState.value = "writes_off";
   (window as unknown as { sow?: unknown }).sow = {
     app: { getVersion: async () => "0.0.0" },
     session: { getToken: async () => "tok" },
@@ -194,6 +196,52 @@ describe("App — the send surface is asked about the ACTIVE scope's onboarded w
     render(<App />);
     await tick();
     expect(screen.getByText("Couldn't load the Not sent list")).toBeTruthy();
+  });
+
+  it("a failed refresh AFTER an empty list still says so (critic, 2026-09-22)", async () => {
+    const answers: UnsentAnswer[] = [{ ok: true, approvals: [] }, { ok: false }];
+    ctl.unsent = async () => answers.shift() ?? { ok: false };
+    render(<App />);
+    await tick();
+    expect(screen.queryByText("Couldn't load the Not sent list")).toBeNull();
+    const lifeCardEl = document.querySelector('[data-approval-id="life-card"]') as HTMLElement;
+    fireEvent.click(within(lifeCardEl).getByRole("button", { name: "Approve" }));
+    await tick();
+    expect(screen.getByText("Couldn't load the Not sent list")).toBeTruthy();
+  });
+
+  it("a failed refresh keeps the last good list on screen AND says the refresh failed", async () => {
+    const answers: UnsentAnswer[] = [{ ok: true, approvals: [approved("kept", LIFE)] }, { ok: false }];
+    ctl.unsent = async () => answers.shift() ?? { ok: false };
+    render(<App />);
+    await tick();
+    const lifeCardEl = document.querySelector('[data-approval-id="life-card"]') as HTMLElement;
+    fireEvent.click(within(lifeCardEl).getByRole("button", { name: "Approve" }));
+    await tick();
+    expect(document.querySelector('[data-approval-id="kept"]')).not.toBeNull();
+    expect(screen.getByText("Couldn't load the Not sent list")).toBeTruthy();
+  });
+
+  it("⛔ a card that was SENT still reads as sent after leaving the page and coming back, before the list reloads", async () => {
+    const answers: (Promise<UnsentAnswer> | UnsentAnswer)[] = [{ ok: true, approvals: [approved("x", LIFE)] }, new Promise<UnsentAnswer>(() => {})];
+    ctl.unsent = async () => answers.shift() ?? { ok: false };
+    sendState.value = "sent";
+    render(<App />);
+    await tick();
+    fireEvent.click(screen.getByRole("button", { name: "Send now" }));
+    await tick();
+    await act(async () => {
+      store().dispatch((s) => navigate(s, { surface: "today" }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await act(async () => {
+      store().dispatch((s) => navigate(s, { surface: "approvals" }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const li = document.querySelector('[data-approval-id="x"]') as HTMLElement;
+    expect(within(li).queryByText("not sent")).toBeNull();
+    expect(within(li).getByText("sent")).toBeTruthy();
+    expect((within(li).getByRole("button", { name: "Send now" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("an approval that arrives from elsewhere (e.g. Telegram, over the push stream) refreshes the list", async () => {
