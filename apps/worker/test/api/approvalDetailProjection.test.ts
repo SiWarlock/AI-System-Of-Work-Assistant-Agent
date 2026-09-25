@@ -129,6 +129,16 @@ describe("toUiSafeLinearTeamList", () => {
     expect(out.teams).toEqual([{ id: "ok", name: "Ok" }]);
   });
 
+  it("drops a team whose id breaks the contract's id bound (over 64, or a line break) — the rest of the list survives", () => {
+    const out = toUiSafeLinearTeamList({
+      status: "ready",
+      teams: [{ id: "x".repeat(65), name: "Long" }, { id: `t${String.fromCharCode(0x85)}1`, name: "Broken" }, { id: "ok", name: "Ok" }],
+      truncated: false,
+    });
+    expect(out.teams).toEqual([{ id: "ok", name: "Ok" }]);
+    expect(UiSafeLinearTeamListSchema.safeParse(out).success).toBe(true);
+  });
+
   it("⛔ a list that is not ready carries NO teams", () => {
     expect(toUiSafeLinearTeamList({ status: "writes_off", teams: [{ id: "t1", name: "Core" }], truncated: false })).toEqual({
       status: "writes_off",

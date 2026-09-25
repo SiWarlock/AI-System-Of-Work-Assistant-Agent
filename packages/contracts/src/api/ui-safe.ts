@@ -738,7 +738,9 @@ export interface UiSafeApprovalDetail {
   priority?: number;
   /**
    * Linear slice 5a — the NAME of the team the issue is created in, so the owner sees where it goes before approving.
-   * Resolved by the worker from the workspace's team list when the form proposed it. Never the team's id.
+   * Resolved by the worker from the workspace's team list when the owner's FORM proposed it, next to the team id it
+   * sends. ⛔ Served ONLY for a card the form proposed (its actor): any other proposer writes the payload itself, so a
+   * name there could name a different team than the one sent (slice-5a review, rules 2+3). Never the team's id.
    */
   teamName?: string;
 }
@@ -802,7 +804,11 @@ export type LinearTeamListStatus = z.infer<typeof linearTeamListStatusSchema>;
 /** The most teams the picker shows. More ⇒ `truncated`, and the form says so. */
 export const MAX_LINEAR_TEAMS = 100;
 
-/** The active workspace's Linear teams. `teams` is empty unless `status` is "ready". */
+/**
+ * The active workspace's Linear teams. ⛔ Unless `status` is "ready", `teams` is EMPTY and `truncated` is false — the
+ * owner's decision (no team data while writes are off), enforced HERE by the contract as well as by the worker's
+ * projector (slice-5a review: it used to be the projector alone).
+ */
 export interface UiSafeLinearTeamList {
   status: LinearTeamListStatus;
   teams: readonly UiSafeLinearTeam[];
@@ -816,11 +822,15 @@ export const UiSafeLinearTeamListSchema = z
     teams: z.array(UiSafeLinearTeamSchema).max(MAX_LINEAR_TEAMS).readonly(),
     truncated: z.boolean(),
   })
-  .strict();
+  .strict()
+  .refine((l) => l.status === "ready" || (l.teams.length === 0 && !l.truncated), {
+    message: "a team list that is not ready carries no teams",
+  });
 
 export const LinearProposalOutcome = [
   "created", // a new pending card; `approval` is it
-  "already_pending", // this form was already submitted with the same content; `approval` is that card
+  "already_pending", // this form was already submitted with the same content; `approval` is that card, still pending
+  "already_decided", // this form was already submitted, and that card has since been decided — start a new issue
   "invalid_input", // a field is missing or out of bounds — nothing was proposed
   "writes_off", // Linear writes are not on for this workspace — nothing was proposed
   "unknown_team", // the team is not one of this workspace's Linear teams — nothing was proposed

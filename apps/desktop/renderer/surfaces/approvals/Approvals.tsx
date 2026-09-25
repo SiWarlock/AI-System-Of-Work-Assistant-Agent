@@ -248,6 +248,8 @@ function DetailsDisclosure({
           ) : (
             <>
               {detail.title !== undefined ? <div className="sow-approval-details-title">{detail.title}</div> : null}
+              {/* Linear slice 5a — where the issue goes. The worker serves it only for a card the owner's form proposed. */}
+              {detail.teamName !== undefined ? <div className="sow-approval-details-meta">Team: {detail.teamName}</div> : null}
               {detail.priority !== undefined ? (
                 <div className="sow-approval-details-meta">Priority: {PRIORITY_LABEL[detail.priority] ?? detail.priority}</div>
               ) : null}
@@ -544,7 +546,7 @@ export function Approvals(props: ApprovalsProps): ReactElement {
 
       {/* Linear slice 5a — keyed by the active workspace: a scope switch drops the form's teams and draft (WS-8). */}
       {activeWorkspaceId !== undefined && activeWorkspaceId !== null && onLoadLinearTeams !== undefined && onProposeLinearIssue !== undefined ? (
-        <NewLinearIssue key={scopeKey} onLoadTeams={onLoadLinearTeams} onPropose={onProposeLinearIssue} />
+        <NewLinearIssue key={scopeKey} onLoadTeams={onLoadLinearTeams} onPropose={onProposeLinearIssue} pendingIds={pending.map((a) => a.id)} />
       ) : null}
 
       {empty ? (

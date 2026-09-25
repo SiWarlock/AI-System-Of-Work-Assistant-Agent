@@ -654,6 +654,13 @@ describe("createWriteHttpTransport — every statusless fault SETS a closed faul
     },
   ];
 
+  it("a throwing mapResponse keeps its redaction-safe HOST ref in the detail (unchanged by the 5a extraction)", async () => {
+    const mapCase = CASES.find((c) => c.token === "map_error");
+    const res = await mapCase?.transport()(CREATE_REQ);
+    expect(res).toMatchObject({ ok: false, fault: "unknown", faultDetail: "map_error", detail: "map error (ref:endpoint-host:api.vendor.com)" });
+    expect(JSON.stringify(res)).not.toContain("MAP_CAUSE_LEAK");
+  });
+
   it.each(CASES.map((c) => [c.name, c] as const))(
     "%s sets faultDetail on the TransportResponse — no statusless fault is left unwired",
     async (_name, c) => {

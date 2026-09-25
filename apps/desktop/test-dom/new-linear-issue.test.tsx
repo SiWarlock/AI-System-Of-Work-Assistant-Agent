@@ -11,6 +11,7 @@ import { StrictMode } from "react";
 import { render, screen, cleanup, fireEvent, act, within } from "@testing-library/react";
 import { Approvals } from "../renderer/surfaces/approvals/Approvals";
 import type { LinearTeamsResult, ProposeLinearIssueResult, LinearIssueDraft } from "../renderer/lib/linear-issue";
+import type { UiSafeApproval } from "@sow/contracts/api/ui-safe";
 
 afterEach(cleanup);
 
@@ -26,17 +27,19 @@ const decide = async () => "applied" as const;
 function page(over: { teams?: () => Promise<LinearTeamsResult>; propose?: (d: LinearIssueDraft) => Promise<ProposeLinearIssueResult>; active?: string | null } = {}) {
   const onLoadLinearTeams = vi.fn(over.teams ?? (async () => READY));
   const onProposeLinearIssue = vi.fn(over.propose ?? (async () => CREATED));
-  const ui = (
+  const uiWith = (approvals: readonly UiSafeApproval[]) => (
     <Approvals
-      approvals={[]}
+      approvals={approvals}
       onDecide={decide}
       activeWorkspaceId={over.active === undefined ? EMP : over.active}
       onLoadLinearTeams={onLoadLinearTeams}
       onProposeLinearIssue={onProposeLinearIssue}
     />
   );
-  return { onLoadLinearTeams, onProposeLinearIssue, ui };
+  return { onLoadLinearTeams, onProposeLinearIssue, ui: uiWith([]), uiWith };
 }
+/** The new card as the App folds it into the inbox after a proposal (nothing publishes approval.update). */
+const NEW_CARD: UiSafeApproval = { id: "idem_new", status: "pending", channel: "mac", subjectKind: "external_action", targetSystem: "linear", workspaceId: EMP };
 async function openForm(): Promise<HTMLElement> {
   fireEvent.click(screen.getByRole("button", { name: "New Linear issue" }));
   await act(async () => {});
@@ -111,7 +114,7 @@ describe("the team list", () => {
   });
 
   it("⛔ a 'writes_off' list that wrongly carries teams still offers no team and cannot submit", async () => {
-    // The contract does not force "no teams unless ready" (the worker's projector does); the form must not rely on it.
+    // The worker's projector AND the contract refuse such a list (slice-5a review); the form must not rely on either.
     render(page({ teams: async () => ({ ok: true, list: { status: "writes_off", teams: [{ id: "t-core", name: "Core" }], truncated: false } }) }).ui);
     const form = await openForm();
     expect(within(form).queryByLabelText("Team")).toBeNull();
@@ -129,7 +132,7 @@ describe("the team list", () => {
 describe("proposing", () => {
   it("sends the draft — one id minted at open, the chosen team, the fields — and says what to do next", async () => {
     const p = page();
-    render(p.ui);
+    const { rerender } = render(p.ui);
     const form = await openForm();
     fireEvent.change(within(form).getByLabelText("Team"), { target: { value: "t-mob" } });
     fireEvent.change(within(form).getByLabelText("Priority"), { target: { value: "2" } });
@@ -140,8 +143,9 @@ describe("proposing", () => {
     const draft = p.onProposeLinearIssue.mock.calls[0]?.[0] as LinearIssueDraft;
     expect(draft).toEqual({ draftId: expect.stringMatching(UUID), teamId: "t-mob", title: "Fix the login loop", description: "Users bounce.", priority: 2 });
     expect(Object.keys(draft).sort()).toEqual(["description", "draftId", "priority", "teamId", "title"]); // no workspace: the App adds the active one
-    // The form closes and the page says the card needs approval.
+    // The form closes; once the App has folded the new card in, the page says it needs approval.
     expect(screen.queryByRole("form", { name: "New Linear issue" })).toBeNull();
+    rerender(p.uiWith([NEW_CARD]));
     expect(screen.getByText(/Proposed.*approve it below/i)).toBeTruthy();
   });
 
@@ -185,12 +189,40 @@ describe("proposing", () => {
     expect(ids[2]).not.toBe(ids[0]);
   });
 
+  it("after 'unknown_team', the teams really are reloaded and the new list is offered", async () => {
+    const lists: LinearTeamsResult[] = [READY, { ok: true, list: { status: "ready", teams: [{ id: "t-new", name: "Newly made" }], truncated: false } }];
+    const p = page({ teams: async () => lists.shift() ?? READY, propose: async () => ({ ok: true, result: { outcome: "unknown_team" } }) });
+    render(p.ui);
+    const form = await openForm();
+    fill(form, "Fix it");
+    fireEvent.click(submitButton(form));
+    await act(async () => {});
+    expect(p.onLoadLinearTeams).toHaveBeenCalledTimes(2);
+    const team = within(form).getByLabelText("Team") as HTMLSelectElement;
+    expect([...team.options].map((o) => o.textContent)).toEqual(["Newly made"]);
+    expect(team.value).toBe("t-new");
+  });
+
+  it("⛔ a slow team list for a form that was CLOSED never overwrites the list of the form reopened since", async () => {
+    let first: (v: LinearTeamsResult) => void = () => {};
+    const answers: (() => Promise<LinearTeamsResult>)[] = [() => new Promise<LinearTeamsResult>((r) => (first = r)), async () => READY];
+    const p = page({ teams: () => (answers.shift() ?? (async () => READY))() });
+    render(p.ui);
+    await openForm(); // load 1: still pending
+    fireEvent.click(screen.getByRole("button", { name: "New Linear issue" })); // close
+    const form = await openForm(); // load 2: ready
+    await act(async () => first({ ok: false })); // load 1 answers LAST, with a failure
+    expect(within(form).getByLabelText("Team")).toBeTruthy();
+    expect(within(form).queryByText("Couldn't load the teams from Linear")).toBeNull();
+  });
+
   it("says honestly why nothing was proposed, for each outcome", async () => {
     const cases: [string, RegExp][] = [
       ["invalid_input", /Check the title and description/],
       ["writes_off", /Linear writes are off for this workspace/],
       ["unknown_team", /That team is no longer in Linear/],
       ["conflict", /already sent with different content/],
+      ["already_decided", /already proposed, and that card has been decided/],
       ["unavailable", /Couldn't create the proposal — try again/],
     ];
     for (const [outcome, text] of cases) {
@@ -203,6 +235,35 @@ describe("proposing", () => {
       expect(within(form).getByText(text), outcome).toBeTruthy();
       unmount();
     }
+  });
+
+  it("after 'already_decided', the next submit is a NEW draft (the old one is spent)", async () => {
+    const answers: ProposeLinearIssueResult[] = [{ ok: true, result: { outcome: "already_decided" } }, CREATED];
+    const p = page({ propose: async () => answers.shift() ?? { ok: false } });
+    render(p.ui);
+    const form = await openForm();
+    fill(form, "Fix it");
+    fireEvent.click(submitButton(form));
+    await act(async () => {});
+    fireEvent.click(submitButton(form));
+    await act(async () => {});
+    const ids = p.onProposeLinearIssue.mock.calls.map((c) => (c[0] as LinearIssueDraft).draftId);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it("'Approve it below' disappears once that card is no longer pending", async () => {
+    const p = page();
+    const pendingCard = { id: "idem_new", status: "pending" as const, channel: "mac" as const, subjectKind: "external_action" as const, targetSystem: "linear" as const, workspaceId: EMP };
+    const { rerender } = render(p.ui);
+    const form = await openForm();
+    fill(form, "Fix it");
+    fireEvent.click(submitButton(form));
+    await act(async () => {});
+    const props = { onDecide: decide, activeWorkspaceId: EMP, onLoadLinearTeams: p.onLoadLinearTeams, onProposeLinearIssue: p.onProposeLinearIssue };
+    rerender(<Approvals approvals={[pendingCard]} {...props} />);
+    expect(screen.getByText(/Proposed.*approve it below/i)).toBeTruthy();
+    rerender(<Approvals approvals={[{ ...pendingCard, status: "approved" }]} {...props} />);
+    expect(screen.queryByText(/approve it below/i)).toBeNull();
   });
 
   it("after 'conflict', the next submit is a NEW draft (the old one is spent)", async () => {
@@ -221,12 +282,13 @@ describe("proposing", () => {
 
   it("⛔ works under StrictMode (the dev build the owner runs)", async () => {
     const p = page();
-    render(<StrictMode>{p.ui}</StrictMode>);
+    const { rerender } = render(<StrictMode>{p.ui}</StrictMode>);
     const form = await openForm();
     expect(within(form).getByLabelText("Team")).toBeTruthy();
     fill(form, "Fix it");
     fireEvent.click(submitButton(form));
     await act(async () => {});
+    rerender(<StrictMode>{p.uiWith([NEW_CARD])}</StrictMode>);
     expect(screen.getByText(/Proposed.*approve it below/i)).toBeTruthy();
   });
 

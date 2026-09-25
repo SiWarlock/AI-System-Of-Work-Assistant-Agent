@@ -25,11 +25,12 @@ type UnsentAnswer = { ok: true; approvals: UiSafeApproval[] } | { ok: false };
 const LIFE = "wk-life-3";
 const EMP = "wk-emp-7";
 
-const { asked, storeRef, ctl, sendState } = vi.hoisted(() => ({
+const { asked, storeRef, ctl, sendState, live } = vi.hoisted(() => ({
   asked: [] as { call: string; workspaceId: string }[],
   storeRef: { current: null as unknown },
   ctl: { unsent: null as null | ((workspaceId: string) => Promise<unknown>) },
   sendState: { value: "writes_off" as string },
+  live: { on: true },
 }));
 
 const lifeCard: UiSafeApproval = {
@@ -109,7 +110,7 @@ vi.mock("../renderer/lib/live", async (importOriginal) => {
       );
       store.dispatch((s) => projections.setScope(s, "personal-life"));
       store.dispatch((s) => projections.navigate(s, { surface: "approvals" }));
-      return handle;
+      return live.on ? handle : null;
     }),
   };
 });
@@ -136,6 +137,7 @@ beforeEach(() => {
   asked.length = 0;
   ctl.unsent = null;
   sendState.value = "writes_off";
+  live.on = true;
   (window as unknown as { sow?: unknown }).sow = {
     app: { getVersion: async () => "0.0.0" },
     session: { getToken: async () => "tok" },
@@ -274,6 +276,14 @@ describe("App — the send surface is asked about the ACTIVE scope's onboarded w
     ]);
     // Nothing publishes approval.update, so the App folds the returned card in itself.
     expect(document.querySelector('[data-approval-id="proposed-card"]')).not.toBeNull();
+  });
+
+  it("with NO live worker the page offers no Linear form — never a control that can only fail", async () => {
+    live.on = false;
+    render(<App />);
+    await tick();
+    expect(screen.getByRole("main", { name: "Approvals" })).toBeTruthy(); // positive control: the page rendered
+    expect(screen.queryByRole("button", { name: "New Linear issue" })).toBeNull();
   });
 
   it("any approved card folded into the store (from any source) refreshes the list", async () => {

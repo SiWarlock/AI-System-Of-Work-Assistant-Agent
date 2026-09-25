@@ -10,6 +10,7 @@ import { buildApprovalSendRouter, type ApprovalSendPort } from "../../src/api/pr
 import { createCallerFactory, router, type ApiContext } from "../../src/api/trpc";
 import type { AuthedContext } from "../../src/api/auth/sessionAuth";
 import { NOW, WS, OTHER_WS, vendor, backends, propose } from "./_approvalHarness";
+import { LINEAR_FORM_ACTOR } from "../../src/composition/linearIssue";
 
 const open: ProofSpineBackends[] = [];
 afterEach(() => {
@@ -128,10 +129,21 @@ describe("review follow-ups (2026-09-22) — the payload sent is the payload app
 
   it("shows the TEAM by name (Linear slice 5a) — the owner sees where the issue goes; never the team id", async () => {
     const b = await backends(open);
-    const card = await propose(b, "team", { payload: { teamId: "t-SECRET-ID", teamName: "Core Platform" } });
+    const card = await propose(b, "team", { payload: { teamId: "t-SECRET-ID", teamName: "Core Platform" }, actor: LINEAR_FORM_ACTOR });
     const res = await portFor(b).detail({ workspaceId: String(WS), approvalId: String(card.id) });
     expect(res.ok && res.value.teamName).toBe("Core Platform");
     expect(JSON.stringify(res)).not.toContain("t-SECRET-ID");
+  });
+
+  it("⛔ rules 2+3 (slice-5a review): a team name on a card the form did NOT propose is never shown", async () => {
+    // Only the form's proposer resolves the name from the list it read, next to the team id it sends. Any other
+    // proposer (the Copilot) writes the payload itself, so a name there may name a DIFFERENT team than the one sent.
+    const b = await backends(open);
+    const card = await propose(b, "copilot-team", { payload: { teamId: "team-EXECUTIVE", teamName: "Personal errands" } });
+    const res = await portFor(b).detail({ workspaceId: String(WS), approvalId: String(card.id) });
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.value.teamName).toBeUndefined();
+    expect(JSON.stringify(res)).not.toContain("Personal errands");
   });
 });
 

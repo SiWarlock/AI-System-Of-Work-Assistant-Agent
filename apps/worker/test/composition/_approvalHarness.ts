@@ -62,10 +62,16 @@ export function linearIssue(key: string, over: Partial<ProposedAction["payload"]
 export async function propose(
   b: ProofSpineBackends,
   key: string,
-  opts: { ws?: WorkspaceId; status?: Approval["status"]; payload?: Partial<ProposedAction["payload"]> } = {},
+  opts: { ws?: WorkspaceId; status?: Approval["status"]; payload?: Partial<ProposedAction["payload"]>; actor?: string } = {},
 ): Promise<Approval> {
   const { action, envelope } = linearIssue(key, opts.payload ?? {});
-  const sink = createApprovalsProposeSink({ approvals: b.repos.approvals, workspaceConfig: b.repos.workspaceConfig, outbox: b.repos.outbox, now: () => NOW });
+  const sink = createApprovalsProposeSink({
+    approvals: b.repos.approvals,
+    workspaceConfig: b.repos.workspaceConfig,
+    outbox: b.repos.outbox,
+    now: () => NOW,
+    ...(opts.actor !== undefined ? { actor: opts.actor } : {}),
+  });
   const rec = await sink.record({ action, envelope, workspaceId: opts.ws ?? WS });
   if (!rec.ok) throw new Error(`propose failed: ${rec.error.message}`);
   const card = await b.repos.approvals.get(rec.value.approvalRef as Approval["id"]);

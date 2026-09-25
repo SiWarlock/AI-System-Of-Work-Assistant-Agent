@@ -85,6 +85,10 @@ describe("createLinearTeamsReader — one query, over the guarded write pipeline
 
   it("a malformed answer (no teams.nodes, not JSON) is 'malformed' — never an empty list", async () => {
     expect(await createLinearTeamsReader({ http: http({ status: 200, body: { data: {} } }), secrets: keychain() })(WS)).toEqual({ ok: false, reason: "malformed" });
+    // ⛔ TOTAL (slice-5a review): `teams: null`, a null body, or nodes that is not an array must not throw.
+    for (const body of [{ data: { teams: null } }, { data: null }, null, { data: { teams: { nodes: null } } }]) {
+      expect(await createLinearTeamsReader({ http: http({ status: 200, body }), secrets: keychain() })(WS), JSON.stringify(body)).toEqual({ ok: false, reason: "malformed" });
+    }
     expect(await createLinearTeamsReader({ http: http({ status: 200, body: "<html>" }), secrets: keychain() })(WS)).toEqual({ ok: false, reason: "malformed" });
   });
 

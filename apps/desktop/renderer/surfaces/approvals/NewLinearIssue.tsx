@@ -52,9 +52,11 @@ export interface NewLinearIssueProps {
   readonly onLoadTeams: () => Promise<LinearTeamsResult>;
   /** Propose one issue in the active workspace; the App folds the returned card into the inbox. */
   readonly onPropose: (draft: LinearIssueDraft) => Promise<ProposeLinearIssueResult>;
+  /** The ids of the cards still pending — "approve it below" is said only while the proposed card is one of them. */
+  readonly pendingIds: readonly string[];
 }
 
-export function NewLinearIssue({ onLoadTeams, onPropose }: NewLinearIssueProps): ReactElement {
+export function NewLinearIssue({ onLoadTeams, onPropose, pendingIds }: NewLinearIssueProps): ReactElement {
   const [open, setOpen] = useState(false);
   const [teams, setTeams] = useState<Teams>({ kind: "loading" });
   const [teamId, setTeamId] = useState("");
@@ -63,7 +65,7 @@ export function NewLinearIssue({ onLoadTeams, onPropose }: NewLinearIssueProps):
   const [priority, setPriority] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | undefined>(undefined);
-  const [done, setDone] = useState<string | undefined>(undefined);
+  const [done, setDone] = useState<{ readonly text: string; readonly cardId?: string } | undefined>(undefined);
   const draft = useRef<string | undefined>(undefined);
   const inFlight = useRef(false);
   const loadSeq = useRef(0);
@@ -130,11 +132,18 @@ export function NewLinearIssue({ onLoadTeams, onPropose }: NewLinearIssueProps):
           setDescription("");
           setPriority(0);
           setOpen(false);
-          setDone(r.result.outcome === "created" ? DONE_CREATED : DONE_ALREADY);
+          setDone({
+            text: r.result.outcome === "created" ? DONE_CREATED : DONE_ALREADY,
+            ...(r.result.approval !== undefined ? { cardId: r.result.approval.id } : {}),
+          });
           return;
         case "conflict":
           draft.current = newDraftId(); // this draft was already sent with other content; the next submit is new
           setMessage("This form was already sent with different content. Submit again to propose it as a new issue.");
+          return;
+        case "already_decided":
+          draft.current = newDraftId(); // spent: its card was decided; the next submit is a new issue
+          setMessage("This form was already proposed, and that card has been decided. Submit again to propose a new issue.");
           return;
         case "invalid_input":
           setMessage("Check the title and description, then try again.");
@@ -158,9 +167,10 @@ export function NewLinearIssue({ onLoadTeams, onPropose }: NewLinearIssueProps):
         <button type="button" className="sow-approval-btn" aria-expanded={open} aria-controls={FORM_ID} onClick={toggle}>
           New Linear issue
         </button>
-        {done !== undefined ? (
+        {/* "Approve it below" only while the proposed card IS below (still pending) — slice-5a review. */}
+        {done !== undefined && (done.cardId === undefined || pendingIds.includes(done.cardId)) ? (
           <span className="sow-newissue-done" role="status">
-            {done}
+            {done.text}
           </span>
         ) : null}
       </div>

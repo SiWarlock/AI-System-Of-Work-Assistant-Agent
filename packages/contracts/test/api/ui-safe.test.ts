@@ -75,7 +75,8 @@ const PROJECTIONS = [
   ["sendNowResult", UiSafeSendNowResultSchema, UI_SAFE_ALLOWLIST.sendNowResult] as const,
   // Linear slice 5a — the form proposer: the active workspace's Linear teams, and the result of a proposal.
   ["linearTeam", UiSafeLinearTeamSchema, UI_SAFE_ALLOWLIST.linearTeam] as const,
-  ["linearTeamList", UiSafeLinearTeamListSchema, UI_SAFE_ALLOWLIST.linearTeamList] as const,
+  // The list schema carries a refinement (no teams unless ready), so its field set is read from the inner object.
+  ["linearTeamList", UiSafeLinearTeamListSchema.innerType(), UI_SAFE_ALLOWLIST.linearTeamList] as const,
   ["linearProposalResult", UiSafeLinearProposalResultSchema, UI_SAFE_ALLOWLIST.linearProposalResult] as const,
 ] as const;
 
@@ -863,9 +864,17 @@ describe("UiSafeLinearTeam / UiSafeLinearTeamList / UiSafeLinearProposalResult �
     expect(UiSafeLinearTeamListSchema.safeParse({ status: "ready", teams: [team], truncated: false, workspaceId: "w" }).success).toBe(false);
   });
 
+  it("⛔ owner decision 2026-09-25, enforced by the CONTRACT: a list that is not ready carries no teams and no truncation", () => {
+    for (const status of ["writes_off", "unavailable"]) {
+      expect(UiSafeLinearTeamListSchema.safeParse({ status, teams: [team], truncated: false }).success, status).toBe(false);
+      expect(UiSafeLinearTeamListSchema.safeParse({ status, teams: [], truncated: true }).success, status).toBe(false);
+      expect(UiSafeLinearTeamListSchema.safeParse({ status, teams: [], truncated: false }).success, status).toBe(true);
+    }
+  });
+
   it("a proposal result carries a closed outcome and, at most, the new card's UI-safe record", () => {
     const card = { id: "idem_new", actionRef: "act", status: "pending", channel: "mac", subjectKind: "external_action", targetSystem: "linear", workspaceId: "employer-work" };
-    for (const outcome of ["created", "already_pending", "invalid_input", "writes_off", "unknown_team", "conflict", "unavailable"]) {
+    for (const outcome of ["created", "already_pending", "already_decided", "invalid_input", "writes_off", "unknown_team", "conflict", "unavailable"]) {
       expect(UiSafeLinearProposalResultSchema.safeParse({ outcome }).success).toBe(true);
     }
     expect(UiSafeLinearProposalResultSchema.safeParse({ outcome: "created", approval: card }).success).toBe(true);

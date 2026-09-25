@@ -162,6 +162,12 @@ describe("propose — one Linear issue from the form, as a PENDING card that sti
     for (const c of s.calls) expect(c.envelope.idempotencyKey).toBe(c.action.idempotencyKey);
   });
 
+  it("⛔ a spent draft whose card was already DECIDED answers 'already_decided' — never 'approve it below'", async () => {
+    const decided = { ...CARD, status: "approved" } as unknown as Approval;
+    const { p } = port({ sink: sink(() => ok({ approvalRef: "idem_new", created: false })), approvals: approvalsRepo(decided) });
+    expect(await p.propose(FORM)).toEqual(ok({ outcome: "already_decided" }));
+  });
+
   it("the same form submitted again with the same content answers 'already_pending' with the existing card", async () => {
     const { p } = port({ sink: sink(() => ok({ approvalRef: "idem_new", created: false })) });
     const r = await p.propose(FORM);

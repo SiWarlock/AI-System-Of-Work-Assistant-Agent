@@ -7,7 +7,8 @@
 // ⭐ ONE GUARDED PIPELINE. This reads through `guardedHttpExchange` — the same exchange the Linear write sender uses:
 // the SSRF guard on the final url, the workspace-scoped key read (`writeSecretRef("linear", workspace)`) that fails
 // closed, the key in the header only, redirects never followed, the positive-2xx gate, a parsed body that is never
-// echoed. It reuses `LINEAR_WRITE_SPEC`'s host, auth scheme and rate-limit rule rather than restating them.
+// echoed. It reads `LINEAR_WRITE_SPEC`'s host, allowed hosts, auth scheme and rate-limit rule rather than restating them
+// (the auth scheme was a copied literal until the slice-5a review).
 //
 // ⛔ OWNER DECISION 2026-09-25: the team list is read ONLY when Linear writes are on for the workspace. This module
 // does not decide that and makes no real calls (the http client is injected). The worker builds the reader in ONE
@@ -33,7 +34,8 @@ export type LinearTeamsRead =
 const TEAMS_SPEC: GuardedHttpSpec = {
   baseUrl: LINEAR_WRITE_SPEC.baseUrl,
   allowedHosts: LINEAR_WRITE_SPEC.allowedHosts,
-  authScheme: "raw",
+  // The WRITE spec's scheme, not a copy of it: if writes move to another scheme, the team read moves with them.
+  ...(LINEAR_WRITE_SPEC.authScheme !== undefined ? { authScheme: LINEAR_WRITE_SPEC.authScheme } : {}),
   // A fixed QUERY document; the page size rides in `variables`, never in the text.
   buildRequest: () => ({ method: "POST", path: "/graphql", body: JSON.stringify({ query: TEAMS_QUERY, variables: { first: LINEAR_TEAMS_PAGE } }) }),
   ...(LINEAR_WRITE_SPEC.retryableBody !== undefined ? { retryableBody: LINEAR_WRITE_SPEC.retryableBody } : {}),
@@ -74,15 +76,22 @@ export function createLinearTeamsReader(deps: WriteHttpTransportDeps): (workspac
       if (exchanged.faultDetail === "malformed_body") return { ok: false, reason: "malformed" };
       return { ok: false, reason: "rejected" };
     }
-    const json = exchanged.json;
-    if (hasErrors(json)) return { ok: false, reason: isRateLimited(json) ? "unreachable" : "rejected" };
-    const teams = (json as { data?: { teams?: { nodes?: unknown; pageInfo?: { hasNextPage?: unknown } } } } | null)?.data?.teams;
-    if (teams === undefined || !Array.isArray(teams.nodes)) return { ok: false, reason: "malformed" };
-    const out: { id: string; name: string }[] = [];
-    for (const n of teams.nodes as unknown[]) {
-      const node = n as { id?: unknown; name?: unknown } | null;
-      if (typeof node?.id === "string" && typeof node.name === "string") out.push({ id: node.id, name: node.name });
+    try {
+      const json = exchanged.json;
+      if (hasErrors(json)) return { ok: false, reason: isRateLimited(json) ? "unreachable" : "rejected" };
+      const teams = (json as { data?: { teams?: unknown } } | null)?.data?.teams;
+      // `null` included: `{ "teams": null }` is a malformed answer, not a crash (slice-5a review, measured).
+      if (typeof teams !== "object" || teams === null) return { ok: false, reason: "malformed" };
+      const { nodes, pageInfo } = teams as { nodes?: unknown; pageInfo?: { hasNextPage?: unknown } | null };
+      if (!Array.isArray(nodes)) return { ok: false, reason: "malformed" };
+      const out: { id: string; name: string }[] = [];
+      for (const n of nodes as unknown[]) {
+        const node = n as { id?: unknown; name?: unknown } | null;
+        if (typeof node?.id === "string" && typeof node.name === "string") out.push({ id: node.id, name: node.name });
+      }
+      return { ok: true, teams: out, hasMore: pageInfo?.hasNextPage === true };
+    } catch {
+      return { ok: false, reason: "malformed" }; // TOTAL: an unexpected answer shape never throws out of the reader
     }
-    return { ok: true, teams: out, hasMore: teams.pageInfo?.hasNextPage === true };
   };
 }

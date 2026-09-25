@@ -42,6 +42,7 @@ import {
   splitToSummaryLines,
   targetSystemSchema,
   UiSafeScheduleEntrySchema,
+  UiSafeLinearTeamSchema,
   MAX_LINEAR_TEAMS,
 } from "@sow/contracts";
 import { permitsRawDrillDown } from "@sow/policy";
@@ -358,8 +359,9 @@ export function toUiSafeApprovalDetail(src: ApprovalDetailSource): UiSafeApprova
 
 /**
  * Project the active workspace's Linear teams (Linear slice 5a). Copies each team's `id` and `name` only — named,
- * no spread — collapsing the name to one line; a team without both is dropped rather than failing the list. ⛔ A
- * list that is not `ready` carries NO teams. At most {@link MAX_LINEAR_TEAMS}; more ⇒ `truncated`, never silent.
+ * no spread — collapsing the name to one line; a team without a contract-valid id or a name is dropped rather than
+ * failing the list. ⛔ A list that is not `ready` carries NO teams (the contract refuses one that does). At most
+ * {@link MAX_LINEAR_TEAMS}; more ⇒ `truncated`, never silent.
  */
 export function toUiSafeLinearTeamList(src: {
   status: LinearTeamListStatus;
@@ -372,7 +374,9 @@ export function toUiSafeLinearTeamList(src: {
     if (typeof t.id !== "string" || typeof t.name !== "string") continue;
     const id = t.id.trim();
     const name = collapseToSummaryLine(t.name);
-    if (id.length === 0 || id.length > 64 || name.length === 0) continue;
+    // The id is bounded by the CONTRACT's own id rule (length AND the line-terminator family), so one bad id is dropped
+    // here instead of failing the whole list at the router's re-check (slice-5a review).
+    if (!UiSafeLinearTeamSchema.shape.id.safeParse(id).success || name.length === 0) continue;
     teams.push({ id, name });
   }
   const kept = teams.slice(0, MAX_LINEAR_TEAMS);

@@ -494,3 +494,15 @@ describe("Approvals — step-5 review fixes", () => {
     expect(screen.getByText("Couldn't load the Not sent list")).toBeTruthy();
   });
 });
+
+// Linear slice 5a review (2026-09-25, three lenses): the worker served the team name, but no component showed it — five
+// claims said the owner sees where the issue goes before approving. This pins that they do.
+describe("Approvals — the team shown in Details (Linear slice 5a)", () => {
+  it("shows the team the issue goes to, by name", async () => {
+    const card = apr("e1", { workspaceId: "employer-work", targetSystem: "linear", subjectKind: "external_action" });
+    const detail = { approvalId: "e1", sendState: "awaiting_approval" as const, targetSystem: "linear" as const, title: "Fix it", teamName: "Core Platform" };
+    render(<Approvals approvals={[card]} onDecide={async () => "applied" as const} activeWorkspaceId="employer-work" onOpenDetail={async () => ({ ok: true as const, detail })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(await screen.findByText("Team: Core Platform")).toBeTruthy();
+  });
+});

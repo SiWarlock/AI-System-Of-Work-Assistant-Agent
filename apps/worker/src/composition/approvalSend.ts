@@ -15,6 +15,7 @@ import type { ApprovalRepository, OutboxRepository, WorkspaceConfigRepository } 
 import type { ApprovalSendPort, ApprovalRefInput, WorkspaceInput } from "../api/procedures/approvalSend";
 import { toUiSafeApproval, toUiSafeApprovalDetail, toUiSafeSendNowResult } from "../api/projections/uiSafe";
 import { checkSavedAction, sendStateOf, type ExternalApprovalSender, type SavedActionCheck } from "./externalApprovalDispatch";
+import { LINEAR_FORM_ACTOR } from "./linearIssue";
 
 export interface ApprovalSendPortDeps {
   readonly approvals: ApprovalRepository;
@@ -48,19 +49,23 @@ async function ownCard(deps: ApprovalSendPortDeps, input: ApprovalRefInput): Pro
 /**
  * The action's own content for its details — only for Linear, and only when the saved action is provably this
  * card's (same workspace, same id, and a payload that re-hashes to the approved hash). Linear's write sends
- * `title`, `description`, `priority` and `teamId` (linear-write-spec.ts); the first three are shown, and the team by
- * its NAME (`teamName`, saved by the form's proposer from the list it read — Linear slice 5a). ⚠ A card proposed any
- * other way (the Copilot) carries no `teamName` yet, so its team is not shown; a raw team id tells the owner nothing.
+ * `title`, `description`, `priority` and `teamId` (linear-write-spec.ts); the first three are shown, and — for a card
+ * the owner's FORM proposed — the team by its NAME (`teamName`, saved from the list the worker read — Linear slice 5a).
+ * ⚠ For a card proposed any other way (the Copilot) the team is NOT shown: its payload is model-written, and a raw team
+ * id tells the owner nothing (see `contentOf`).
  * Corrected 2026-09-22 (review): this used to claim Linear sends "exactly title and description". Amended 2026-09-25.
  */
-function contentOf(check: SavedActionCheck): { title?: unknown; description?: unknown; priority?: unknown; teamName?: unknown } {
+function contentOf(card: Approval, check: SavedActionCheck): { title?: unknown; description?: unknown; priority?: unknown; teamName?: unknown } {
   if (check.kind !== "verified" || check.entry.targetSystem !== "linear") return {};
   const payload = check.entry.payload;
   if (typeof payload !== "object" || payload === null) return {};
   const p = payload as Record<string, unknown>;
-  // `teamName` (Linear slice 5a): the form's proposer saves the team's NAME, read from that workspace's Linear.
-  // The team id is never read here — it is what is sent, not what the owner reads.
-  return { title: p["title"], description: p["description"], priority: p["priority"], teamName: p["teamName"] };
+  // `teamName` (Linear slice 5a) — ⛔ ONLY for a card the owner's FORM proposed (its actor, set by the worker, not by
+  // any payload). The form saves the name it read from that workspace's Linear next to the team id it sends. Any other
+  // proposer writes the payload itself, so a name there could name a DIFFERENT team than the one sent (rules 2+3,
+  // slice-5a review, measured). The team id is never read here — it is what is sent, not what the owner reads.
+  const fromForm = card.actor === LINEAR_FORM_ACTOR;
+  return { title: p["title"], description: p["description"], priority: p["priority"], ...(fromForm ? { teamName: p["teamName"] } : {}) };
 }
 
 export function createApprovalSendPort(deps: ApprovalSendPortDeps): ApprovalSendPort {
@@ -81,7 +86,7 @@ export function createApprovalSendPort(deps: ApprovalSendPortDeps): ApprovalSend
           sendState: st.state,
           ...(st.refusal !== undefined ? { refusal: st.refusal } : {}),
           ...(check.kind === "verified" ? { targetSystem: check.entry.targetSystem } : {}),
-          ...(st.state === "refused" ? {} : contentOf(check)),
+          ...(st.state === "refused" ? {} : contentOf(card, check)),
         }),
       );
     },

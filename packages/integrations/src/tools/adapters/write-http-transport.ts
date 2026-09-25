@@ -74,7 +74,10 @@
 // the guard. ⚠ A sender built WITHOUT this function would not be seen (corrected 2026-09-22 — the
 // first cut of this sentence cited a row that counted `resolveLinearWriteArming` instead, which a
 // second vendor would not move). Tests here inject fakes only.
-// ⚠ AMENDED 2026-09-25 (Linear slice 5a): steps (1)–(7) are now `guardedHttpExchange`, which ALSO serves ONE read —
+// ⚠ AMENDED 2026-09-25 (Linear slice 5a): everything BEFORE the map — this header's steps (1)–(6), numbered (1)–(7)
+// in the code's own comments — is now `guardedHttpExchange`; the map (header (7), code (8)) stays in
+// `createWriteHttpTransport`. (Corrected in the same round: the first wording said "(1)–(7)", which in THIS header's
+// numbering includes the map.) The exchange ALSO serves ONE read —
 // the Linear teams reader (`linear-teams.ts`, the form's team picker) — over the same key, built in the same armed
 // branch of `resolveLinearWriteArming` and nowhere else (its own row in the same drift guard). The count above is
 // unchanged: that reader does not call this function.

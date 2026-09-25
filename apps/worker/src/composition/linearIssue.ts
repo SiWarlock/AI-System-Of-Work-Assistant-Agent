@@ -114,8 +114,11 @@ export function createLinearIssuePort(deps: LinearIssuePortDeps): LinearIssuePor
         if (INVALID_CODES.has(code)) return ok({ outcome: "invalid_input" });
         return ok({ outcome: "unavailable" });
       }
-      const outcome = proposed.value.created ? "created" : "already_pending";
       const card = await readBack(deps, proposed.value.approvalRef);
+      // A re-submitted draft whose card has since been DECIDED (approved, rejected, expired…) is not "pending": the
+      // sink answers created:false for any status, so the status is read here (slice-5a review). No card is returned.
+      if (!proposed.value.created && card !== undefined && card.status !== "pending") return ok({ outcome: "already_decided" });
+      const outcome = proposed.value.created ? "created" : "already_pending";
       return ok(toUiSafeLinearProposalResult(card !== undefined ? { outcome, approval: card } : { outcome }));
     },
   };

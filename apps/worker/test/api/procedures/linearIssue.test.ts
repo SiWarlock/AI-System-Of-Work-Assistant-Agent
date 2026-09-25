@@ -105,6 +105,8 @@ describe("linearIssue.propose — the form is validated at the boundary; a bad f
       { ...FORM, teamId: "" },
       { ...FORM, teamId: "x".repeat(65) },
       { ...FORM, workspaceId: "" },
+      { ...FORM, workspaceId: `employer${String.fromCharCode(0x85)}work` },
+      { ...FORM, teamId: `t${String.fromCharCode(0x2028)}core` },
       // ⛔ REQ-F-017 — the form has no owner and no date; one that carries them is refused, not silently dropped.
       { ...FORM, assigneeId: "user-1" },
       { ...FORM, dueDate: "2026-12-01" },
