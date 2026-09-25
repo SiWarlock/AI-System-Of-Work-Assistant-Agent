@@ -23,6 +23,8 @@ import { useEffect, useRef, useState, type ReactElement } from "react";
 import type { UiSafeApproval, UiSafeApprovalDetail, ApprovalSendState, ApprovalSendRefusal } from "@sow/contracts/api/ui-safe";
 import type { ApprovalDecision } from "../../lib/approval-decision";
 import type { ApprovalDetailResult, SendNowResult } from "../../lib/approval-send";
+import type { LinearIssueDraft, LinearTeamsResult, ProposeLinearIssueResult } from "../../lib/linear-issue";
+import { NewLinearIssue } from "./NewLinearIssue";
 
 /**
  * The client-visible result of a decision request (§9.8). `"already_resolved"` covers BOTH wire
@@ -69,6 +71,13 @@ export interface ApprovalsProps {
   readonly sentApprovalIds?: readonly string[];
   /** Re-run the guarded dispatch for one approved card. Absent (no live worker) ⇒ the button is disabled. */
   readonly onSendNow?: (approvalId: string) => Promise<SendNowResult>;
+  /**
+   * Linear slice 5a — the New Linear issue form. Load the ACTIVE workspace's Linear teams (the App asks for the active
+   * scope). The form is offered only when this, `onProposeLinearIssue` and an active workspace are all present.
+   */
+  readonly onLoadLinearTeams?: () => Promise<LinearTeamsResult>;
+  /** Propose one Linear issue in the active workspace, as a PENDING card. */
+  readonly onProposeLinearIssue?: (draft: LinearIssueDraft) => Promise<ProposeLinearIssueResult>;
 }
 
 /** The four decisions offered on a pending item — each a legal `pending -> …` transition. `edit`
@@ -508,6 +517,8 @@ export function Approvals(props: ApprovalsProps): ReactElement {
     unsentLoadFailed = false,
     sentApprovalIds = [],
     onSendNow,
+    onLoadLinearTeams,
+    onProposeLinearIssue,
   } = props;
   // Cards are keyed by the ACTIVE workspace too, so a scope change remounts them: every open detail is cleared and
   // a late answer for the old scope is dropped (WS-8 — no employer content lingers under a personal scope).
@@ -530,6 +541,11 @@ export function Approvals(props: ApprovalsProps): ReactElement {
           ) : null}
         </div>
       </div>
+
+      {/* Linear slice 5a — keyed by the active workspace: a scope switch drops the form's teams and draft (WS-8). */}
+      {activeWorkspaceId !== undefined && activeWorkspaceId !== null && onLoadLinearTeams !== undefined && onProposeLinearIssue !== undefined ? (
+        <NewLinearIssue key={scopeKey} onLoadTeams={onLoadLinearTeams} onPropose={onProposeLinearIssue} />
+      ) : null}
 
       {empty ? (
         <div className="sow-empty" role="status">

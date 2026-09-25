@@ -5,8 +5,8 @@
 // An accessor that merely exists is not proof of a key: the first cut checked construction, so the
 // switch reported ARMED with no key at all (review, 2026-09-21, upheld 3/3).
 //
-// ⚠ Arming this alone still creates NO Linear issue: nothing proposes one yet (slice 5). Approving an
-// external write in the Approvals screen does send it since slice 3+4, but there is nothing to approve.
+// ⚠ Arming this alone still creates NO Linear issue: the owner proposes one with the Approvals page's form (slice
+// 5a) and then approves the card, which sends it (slice 3+4).
 // This file pins the SENDER and the switch; it does not make anything send.
 import { describe, it, expect, vi } from "vitest";
 import { ok, err } from "@sow/contracts";

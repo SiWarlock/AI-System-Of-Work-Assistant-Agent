@@ -19,8 +19,9 @@ export interface WorkerArmingConfig {
   /**
    * The owner switch for REAL Linear writes (Linear slice 2). PLAIN DATA only — the worker host builds
    * the actual transport factory, because a function cannot cross the fork IPC channel (desktop L14).
-   * Absent ⇒ off and byte-equivalent. ⚠ Turning it on still creates no Linear issue by itself: nothing
-   * proposes one yet (slice 5). With it off, approving an external action sends nothing and says so.
+   * Absent ⇒ off and byte-equivalent. ⚠ Turning it on still creates no Linear issue by itself: the owner
+   * proposes one with the Approvals page's "New Linear issue" form (slice 5a, which can pick a team only while
+   * this is on) and then approves the card. With it off, approving an external action sends nothing and says so.
    */
   readonly linearWrites?: { readonly enabled: boolean };
 }

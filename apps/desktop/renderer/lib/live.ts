@@ -66,6 +66,13 @@ import {
   type UnsentApprovalsResult,
   type SendNowResult,
 } from "./approval-send";
+import {
+  createLinearTeams,
+  createProposeLinearIssue,
+  type LinearTeamsResult,
+  type ProposeLinearIssueResult,
+  type LinearIssueDraft,
+} from "./linear-issue";
 
 /** The live-session handle: stop the stream + drill-down (§9.4) + scope-aware re-hydrate (§9.5). */
 export interface StartLiveHandle {
@@ -119,6 +126,13 @@ export interface StartLiveHandle {
   readonly unsentApprovals: (workspaceId: string) => Promise<UnsentApprovalsResult>;
   /** Re-run the guarded dispatch for one approved card (wired to approvalSend.sendNow). Fails closed. */
   readonly sendNow: (workspaceId: string, approvalId: string) => Promise<SendNowResult>;
+  /**
+   * Linear slice 5a — the active workspace's Linear teams for the New Linear issue form (wired to linearIssue.teams).
+   * The worker reads them from Linear only while Linear writes are on; otherwise the list says so. Fails closed.
+   */
+  readonly linearTeams: (workspaceId: string) => Promise<LinearTeamsResult>;
+  /** Propose one Linear issue as a PENDING card (wired to linearIssue.propose). Fails closed. */
+  readonly proposeLinearIssue: (workspaceId: string, draft: LinearIssueDraft) => Promise<ProposeLinearIssueResult>;
 }
 
 // Connect the UI-safe store to the LIVE worker over the §10 push stream (9.4b E).
@@ -206,6 +220,8 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
     approvalDetail: createApprovalDetail(live.client),
     unsentApprovals: createUnsentApprovals(live.client),
     sendNow: createSendNow(live.client),
+    linearTeams: createLinearTeams(live.client),
+    proposeLinearIssue: createProposeLinearIssue(live.client),
   };
 }
 

@@ -79,6 +79,21 @@ vi.mock("../renderer/lib/live", async (importOriginal) => {
       asked.push({ call: "sendNow", workspaceId });
       return { ok: true, result: { approvalId, sendState: sendState.value } };
     },
+    // Linear slice 5a — the New Linear issue form.
+    linearTeams: async (workspaceId: string) => {
+      asked.push({ call: "linearTeams", workspaceId });
+      return { ok: true, list: { status: "ready", teams: [{ id: "t-core", name: "Core" }], truncated: false } };
+    },
+    proposeLinearIssue: async (workspaceId: string) => {
+      asked.push({ call: "proposeLinearIssue", workspaceId });
+      return {
+        ok: true,
+        result: {
+          outcome: "created",
+          approval: { id: "proposed-card", actionRef: "act-new", status: "pending", channel: "mac", subjectKind: "external_action", targetSystem: "linear", workspaceId: "wk-life-3" },
+        },
+      };
+    },
   } as unknown as StartLiveHandle;
   return {
     ...actual,
@@ -242,6 +257,23 @@ describe("App — the send surface is asked about the ACTIVE scope's onboarded w
     expect(within(li).queryByText("not sent")).toBeNull();
     expect(within(li).getByText("sent")).toBeTruthy();
     expect((within(li).getByRole("button", { name: "Send now" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("⛔ the Linear form reads the ACTIVE workspace's teams and proposes there; the new card joins the inbox", async () => {
+    render(<App />);
+    await tick();
+    fireEvent.click(screen.getByRole("button", { name: "New Linear issue" }));
+    await tick();
+    const form = screen.getByRole("form", { name: "New Linear issue" });
+    fireEvent.change(within(form).getByLabelText("Title"), { target: { value: "Fix it" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Propose issue" }));
+    await tick();
+    expect(asked.filter((a) => a.call === "linearTeams" || a.call === "proposeLinearIssue")).toEqual([
+      { call: "linearTeams", workspaceId: LIFE },
+      { call: "proposeLinearIssue", workspaceId: LIFE },
+    ]);
+    // Nothing publishes approval.update, so the App folds the returned card in itself.
+    expect(document.querySelector('[data-approval-id="proposed-card"]')).not.toBeNull();
   });
 
   it("any approved card folded into the store (from any source) refreshes the list", async () => {

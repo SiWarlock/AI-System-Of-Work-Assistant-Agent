@@ -214,8 +214,9 @@ async function start(config: WorkerHostConfig): Promise<void> {
     // nothing, so `resolveLinearWriteArming` looks up each workspace's Linear key first — the same
     // construction-vs-resolution rule as the provenance block above (corrected 2026-09-21; the first cut
     // reported ARMED with no key). Switch off ⇒ no Keychain read at all.
-    // ⚠ "ARMED" means the SENDER is live. It does not mean anything is writing: nothing proposes a
-    // Linear issue yet (slice 5). Approving one does send it (slice 3+4, bootWorker's real dispatcher).
+    // ⚠ "ARMED" means the SENDER is live. It does not mean anything is writing: a Linear issue is written only
+    // after the owner proposes it (the Approvals page's "New Linear issue" form, slice 5a — its team list is read
+    // only while this is armed) AND approves the card (slice 3+4, bootWorker's real dispatcher).
     const linearOn = config.linearWrites?.enabled === true;
     const linearArming = await resolveLinearWriteArming({
       enabled: linearOn,

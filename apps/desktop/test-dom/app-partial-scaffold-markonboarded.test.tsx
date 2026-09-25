@@ -47,6 +47,8 @@ vi.mock("../renderer/lib/live", async (importOriginal) => {
     approvalDetail: async () => ({ ok: false }),
     unsentApprovals: async () => ({ ok: false }),
     sendNow: async () => ({ ok: false }),
+    linearTeams: async () => ({ ok: false }),
+    proposeLinearIssue: async () => ({ ok: false }),
   };
   return { ...actual, startLive: vi.fn(async () => stubHandle) };
 });

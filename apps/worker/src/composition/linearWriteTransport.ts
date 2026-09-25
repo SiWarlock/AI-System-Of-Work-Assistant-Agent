@@ -15,8 +15,9 @@
 //
 // ⚠ ARMING THIS ALONE CREATES NO LINEAR ISSUE. It satisfies `gateProposeArming` precondition (4)
 // (`writeTransportArmed`), and since Linear slice 3+4 approving an external write in the Approvals screen
-// really sends it (`externalApprovalDispatch.ts`). But nothing proposes a Linear issue yet (slice 5), so there
-// is nothing to approve. Do not read "armed" as "writing".
+// really sends it (`externalApprovalDispatch.ts`). Since slice 5a the owner proposes one with the Approvals page's
+// "New Linear issue" form, whose team list this module's armed branch reads (below); a Linear issue is written only
+// after that card is APPROVED. Do not read "armed" as "writing".
 import { writeSecretRef, type WriteSecretsAccessor } from "@sow/integrations";
 import {
   createWriteHttpTransport,
@@ -151,7 +152,7 @@ export async function resolveLinearWriteArming(deps: LinearWriteArmingDeps): Pro
 /** Operator-facing and redaction-safe: a closed reason, or workspace ids. Never a key, never a ref. */
 export function describeLinearWriteArming(outcome: LinearWriteArmingOutcome): string {
   if (outcome.armed) {
-    return `linear writes: SENDER ARMED for ${outcome.workspaces.join(", ")} (nothing proposes Linear issues yet)`;
+    return `linear writes: SENDER ARMED for ${outcome.workspaces.join(", ")} (an issue is written only after you propose and approve it)`;
   }
   const fix: Record<LinearNotArmedReason, string> = {
     switch_off: "SOW_LINEAR_WRITES is not on",

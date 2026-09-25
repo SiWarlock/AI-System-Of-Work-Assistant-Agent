@@ -1791,6 +1791,65 @@ body {
   font-weight: 600;
 }
 
+/* Linear slice 5a — the "New Linear issue" form on the Approvals page. */
+.sow-newissue {
+  margin: -8px 0 18px;
+}
+
+.sow-newissue-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.sow-newissue-done {
+  font-size: 12.5px;
+  color: var(--good-ink, #1f7a3a);
+}
+
+.sow-newissue-form {
+  margin-top: 10px;
+  padding: 12px 14px 4px;
+  border: 0.5px solid var(--hairline, rgba(0, 0, 0, 0.08));
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.5);
+  max-width: 640px;
+}
+
+.sow-newissue-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 12.5px;
+  color: var(--label-2, #6b6b70);
+}
+
+.sow-newissue-description {
+  resize: vertical;
+  min-height: 84px;
+}
+
+.sow-newissue-priority {
+  max-width: 180px;
+}
+
+.sow-newissue-message {
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  color: var(--warn-ink, #b25e00);
+}
+
+.sow-newissue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
 .sow-approval-snoozed {
   margin-top: 18px;
 }

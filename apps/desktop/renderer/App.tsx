@@ -38,6 +38,7 @@ import type { AskResult } from "./lib/copilot-ask";
 import type { AuditDrillResult } from "./lib/audit-drill";
 import type { ApprovalDecision } from "./lib/approval-decision";
 import type { ApprovalDetailResult, SendNowResult } from "./lib/approval-send";
+import type { LinearIssueDraft, LinearTeamsResult, ProposeLinearIssueResult } from "./lib/linear-issue";
 import type { UiSafeApproval } from "@sow/contracts/api/ui-safe";
 import type { TriageDisposition, RerouteTarget } from "./lib/triage-disposition";
 import { reroutePickerOptions } from "./lib/reroute-picker";
@@ -257,6 +258,24 @@ export function App(): ReactElement {
       return r;
     });
   };
+  // Linear slice 5a — the New Linear issue form. Asked with the ACTIVE scope's workspace, like every request above
+  // (WS-8). The worker reads the teams from Linear only while Linear writes are on for that workspace.
+  const onLoadLinearTeams = (): Promise<LinearTeamsResult> => {
+    const handle = liveRef.current;
+    if (activeWorkspaceId === null || handle === null) return Promise.resolve({ ok: false });
+    return handle.linearTeams(activeWorkspaceId);
+  };
+  const onProposeLinearIssue = (draft: LinearIssueDraft): Promise<ProposeLinearIssueResult> => {
+    const handle = liveRef.current;
+    if (activeWorkspaceId === null || handle === null) return Promise.resolve({ ok: false });
+    return handle.proposeLinearIssue(activeWorkspaceId, draft).then((r) => {
+      // Nothing publishes approval.update in production (measured 2026-09-25), so the new PENDING card is folded in
+      // here — as a decision's record is — and appears in the inbox ready to approve.
+      const card = r.ok ? r.result.approval : undefined;
+      if (card !== undefined) store.dispatch((s) => hydrateApprovals(s, [card]));
+      return r;
+    });
+  };
 
   // §9.7 triage disposition: REQUEST the worker's replay-safe pipeline re-entry (deterministic
   // idempotency key, minted caller-side). On ok, DRAIN the item from the workspace-scoped inbox
@@ -424,6 +443,8 @@ export function App(): ReactElement {
           unsentLoadFailed={unsent.workspaceId === activeWorkspaceId && unsent.loadFailed}
           sentApprovalIds={unsent.workspaceId === activeWorkspaceId ? unsent.sentIds : []}
           onSendNow={hasLiveWorker ? onSendNow : undefined}
+          onLoadLinearTeams={hasLiveWorker ? onLoadLinearTeams : undefined}
+          onProposeLinearIssue={hasLiveWorker ? onProposeLinearIssue : undefined}
         />
       ) : state.route.surface === "ingestion" ? (
         <IngestionInbox
