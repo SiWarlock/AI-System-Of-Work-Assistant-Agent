@@ -26,6 +26,9 @@ import {
   UiSafeTaskRollupSchema,
   UiSafeApprovalDetailSchema,
   UiSafeSendNowResultSchema,
+  UiSafeLinearTeamSchema,
+  UiSafeLinearTeamListSchema,
+  UiSafeLinearProposalResultSchema,
   splitToSummaryLines,
   collapseToSummaryLine,
   UI_SAFE_ALLOWLIST,
@@ -70,6 +73,10 @@ const PROJECTIONS = [
   // Linear slice 3+4 — an approval's details, served ONLY in its own workspace, and the result of "Send now".
   ["approvalDetail", UiSafeApprovalDetailSchema, UI_SAFE_ALLOWLIST.approvalDetail] as const,
   ["sendNowResult", UiSafeSendNowResultSchema, UI_SAFE_ALLOWLIST.sendNowResult] as const,
+  // Linear slice 5a — the form proposer: the active workspace's Linear teams, and the result of a proposal.
+  ["linearTeam", UiSafeLinearTeamSchema, UI_SAFE_ALLOWLIST.linearTeam] as const,
+  ["linearTeamList", UiSafeLinearTeamListSchema, UI_SAFE_ALLOWLIST.linearTeamList] as const,
+  ["linearProposalResult", UiSafeLinearProposalResultSchema, UI_SAFE_ALLOWLIST.linearProposalResult] as const,
 ] as const;
 
 describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage gate)", () => {
@@ -829,5 +836,53 @@ describe("splitToSummaryLines — a description as single lines (the same newlin
     expect(out.lines).toHaveLength(40);
     expect(out.truncated).toBe(true);
     expect(UiSafeApprovalDetailSchema.safeParse({ approvalId: "x", sendState: "ready", descriptionLines: out.lines }).success).toBe(true);
+  });
+});
+
+// Linear slice 5a (owner decisions 2026-09-25): a form on the Approvals page proposes a Linear issue. The team list is
+// read from Linear ONLY when Linear writes are on for the workspace; while off, the list says so as a VALUE. A
+// proposal's outcome is data too, so the form can say exactly what happened.
+describe("UiSafeLinearTeam / UiSafeLinearTeamList / UiSafeLinearProposalResult — Linear slice 5a", () => {
+  const team = { id: "5f1c9d1e-2b8a-4d53-9b0e-0e6b2f0c7a11", name: "Core Platform" };
+
+  it("a team is exactly an id and a single-line name", () => {
+    expect(UiSafeLinearTeamSchema.safeParse(team).success).toBe(true);
+    expect(UiSafeLinearTeamSchema.safeParse({ ...team, key: "CORE" }).success).toBe(false); // .strict()
+    expect(UiSafeLinearTeamSchema.safeParse({ ...team, name: "two\nlines" }).success).toBe(false);
+    expect(UiSafeLinearTeamSchema.safeParse({ ...team, id: "x".repeat(65) }).success).toBe(false);
+    expect(UiSafeLinearTeamSchema.safeParse({ ...team, name: "" }).success).toBe(false);
+  });
+
+  it("a team list carries a closed status, at most 100 teams, and whether Linear had more", () => {
+    expect(UiSafeLinearTeamListSchema.safeParse({ status: "ready", teams: [team], truncated: false }).success).toBe(true);
+    expect(UiSafeLinearTeamListSchema.safeParse({ status: "writes_off", teams: [], truncated: false }).success).toBe(true);
+    expect(UiSafeLinearTeamListSchema.safeParse({ status: "unavailable", teams: [], truncated: false }).success).toBe(true);
+    expect(UiSafeLinearTeamListSchema.safeParse({ status: "armed", teams: [], truncated: false }).success).toBe(false);
+    expect(UiSafeLinearTeamListSchema.safeParse({ status: "ready", teams: Array.from({ length: 101 }, () => team), truncated: true }).success).toBe(false);
+    expect(UiSafeLinearTeamListSchema.safeParse({ status: "ready", teams: [team] }).success).toBe(false); // truncated is required
+    expect(UiSafeLinearTeamListSchema.safeParse({ status: "ready", teams: [team], truncated: false, workspaceId: "w" }).success).toBe(false);
+  });
+
+  it("a proposal result carries a closed outcome and, at most, the new card's UI-safe record", () => {
+    const card = { id: "idem_new", actionRef: "act", status: "pending", channel: "mac", subjectKind: "external_action", targetSystem: "linear", workspaceId: "employer-work" };
+    for (const outcome of ["created", "already_pending", "invalid_input", "writes_off", "unknown_team", "conflict", "unavailable"]) {
+      expect(UiSafeLinearProposalResultSchema.safeParse({ outcome }).success).toBe(true);
+    }
+    expect(UiSafeLinearProposalResultSchema.safeParse({ outcome: "created", approval: card }).success).toBe(true);
+    expect(UiSafeLinearProposalResultSchema.safeParse({ outcome: "sent" }).success).toBe(false);
+    // ⛔ never echoes the submitted content or any key back
+    for (const forbidden of ["title", "description", "payload", "teamId", "idempotencyKey", "draft"]) {
+      expect(UiSafeLinearProposalResultSchema.safeParse({ outcome: "created", [forbidden]: "x" }).success).toBe(false);
+    }
+    // the nested card is the strict UI-safe approval record — an extra key on it is refused too
+    expect(UiSafeLinearProposalResultSchema.safeParse({ outcome: "created", approval: { ...card, payloadHash: "h" } }).success).toBe(false);
+  });
+
+  it("an approval's details may name the TEAM by name (one line) — still never its id", () => {
+    const ok = { approvalId: "idem_abc", sendState: "writes_off", targetSystem: "linear", title: "Fix the login bug" };
+    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, teamName: "Core Platform" }).success).toBe(true);
+    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, teamName: "two\nlines" }).success).toBe(false);
+    expect(UI_SAFE_ALLOWLIST.approvalDetail as readonly string[]).not.toContain("teamId");
+    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, teamId: "t" }).success).toBe(false);
   });
 });

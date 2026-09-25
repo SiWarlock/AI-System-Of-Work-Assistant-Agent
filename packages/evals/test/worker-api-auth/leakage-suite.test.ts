@@ -12,9 +12,11 @@ import {
 import {
   ALL_SENTINELS,
   taintedApproval,
+  taintedLinearTeamListSource,
+  taintedLinearProposalSource,
   findLeakedSentinel,
 } from "../../src/worker-api-auth/fixtures";
-import { toUiSafeApproval } from "@sow/worker/api/projections/uiSafe";
+import { toUiSafeApproval, toUiSafeLinearTeamList, toUiSafeLinearProposalResult } from "@sow/worker/api/projections/uiSafe";
 
 describe("§12 UI-SAFE LEAKAGE suite — worker-api-auth.ui-safe-leakage", () => {
   it("passes every case (the DoD gate for phase-exit 8)", () => {
@@ -29,7 +31,7 @@ describe("§12 UI-SAFE LEAKAGE suite — worker-api-auth.ui-safe-leakage", () =>
     const result = runLeakageSuite();
     const ids = result.cases.map((c) => c.id);
     // Query (projector) surface.
-    for (const kind of ["approval", "health", "workflow", "dashboard", "approvalDetail", "sendNowResult"]) {
+    for (const kind of ["approval", "health", "workflow", "dashboard", "approvalDetail", "sendNowResult", "linearTeamList", "linearProposalResult"]) {
       expect(ids.some((id) => id.startsWith(`leak.query.${kind}.`))).toBe(true);
     }
     // Stream surface (all 4 event classes) + the strict-schema re-validation.
@@ -46,6 +48,25 @@ describe("§12 UI-SAFE LEAKAGE suite — worker-api-auth.ui-safe-leakage", () =>
     for (const s of ALL_SENTINELS) {
       expect(taintedJson).toContain(s);
     }
+    // Linear slice 5a — the team-list source carries every sentinel INSIDE its team too (where a spread of one
+    // team would leak it), and the proposal source carries them beside the outcome and inside the card.
+    const teamListSource = taintedLinearTeamListSource();
+    const oneTeamJson = JSON.stringify((teamListSource["teams"] as object[])[0]);
+    const proposalJson = JSON.stringify(taintedLinearProposalSource());
+    for (const s of ALL_SENTINELS) {
+      expect(oneTeamJson).toContain(s);
+      expect(proposalJson).toContain(s);
+    }
+  });
+
+  it("RED control (slice 5a): a projector that spread a team, or the whole proposal, WOULD be caught", () => {
+    const teams = taintedLinearTeamListSource();
+    const spreadTeams = { status: "ready", teams: (teams["teams"] as object[]).map((t) => ({ ...t })), truncated: false };
+    expect(findLeakedSentinel(spreadTeams)).toBeDefined();
+    expect(findLeakedSentinel(toUiSafeLinearTeamList(teams as unknown as Parameters<typeof toUiSafeLinearTeamList>[0]))).toBeUndefined();
+    const proposal = taintedLinearProposalSource();
+    expect(findLeakedSentinel({ ...proposal })).toBeDefined();
+    expect(findLeakedSentinel(toUiSafeLinearProposalResult(proposal as unknown as Parameters<typeof toUiSafeLinearProposalResult>[0]))).toBeUndefined();
   });
 
   it("RED control: the leak scanner catches a deliberately-broken (spread) projector", () => {

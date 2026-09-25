@@ -736,6 +736,11 @@ export interface UiSafeApprovalDetail {
   descriptionTruncated?: boolean;
   /** Linear's priority (0 none … 4 low) — Linear sends it, so the owner must see it before approving. */
   priority?: number;
+  /**
+   * Linear slice 5a — the NAME of the team the issue is created in, so the owner sees where it goes before approving.
+   * Resolved by the worker from the workspace's team list when the form proposed it. Never the team's id.
+   */
+  teamName?: string;
 }
 
 export const UiSafeApprovalDetailSchema = z
@@ -748,6 +753,7 @@ export const UiSafeApprovalDetailSchema = z
     descriptionLines: z.array(uiSafeSummaryLine).max(40).readonly().optional(),
     descriptionTruncated: z.boolean().optional(),
     priority: z.number().int().min(0).max(4).optional(),
+    teamName: uiSafeSummaryLine.optional(),
   })
   .strict();
 
@@ -763,6 +769,81 @@ export const UiSafeSendNowResultSchema = z
     approvalId: z.string().min(1),
     sendState: approvalSendStateSchema,
     refusal: approvalSendRefusalSchema.optional(),
+  })
+  .strict();
+
+// ── Linear slice 5a — the form proposer (owner decisions 2026-09-25) ──
+// A form on the Approvals page proposes a Linear issue in the ACTIVE workspace. Its team picker is read from Linear
+// ONLY when Linear writes are on for that workspace; while they are off, the list says so as a VALUE and no Linear
+// call is made. ⚠ A team name is the vendor's content (Employer-Work raw content in the employer workspace): it is
+// served only for the workspace it belongs to, and bounded here by TYPE (one line), never trusted.
+
+/** One of the workspace's Linear teams, for the form's team picker. */
+export interface UiSafeLinearTeam {
+  id: string;
+  name: string;
+}
+
+export const UiSafeLinearTeamSchema = z
+  .object({
+    id: uiSafeToken,
+    name: uiSafeSummaryLine,
+  })
+  .strict();
+
+export const LinearTeamListStatus = [
+  "ready", // the teams were read from Linear
+  "writes_off", // Linear writes are not on for this workspace: nothing was read, and nothing can be proposed
+  "unavailable", // Linear could not be read (unreachable, refused, or an unreadable answer) — retry
+] as const;
+export const linearTeamListStatusSchema = z.enum(LinearTeamListStatus);
+export type LinearTeamListStatus = z.infer<typeof linearTeamListStatusSchema>;
+
+/** The most teams the picker shows. More ⇒ `truncated`, and the form says so. */
+export const MAX_LINEAR_TEAMS = 100;
+
+/** The active workspace's Linear teams. `teams` is empty unless `status` is "ready". */
+export interface UiSafeLinearTeamList {
+  status: LinearTeamListStatus;
+  teams: readonly UiSafeLinearTeam[];
+  /** Linear has more teams than the picker shows. */
+  truncated: boolean;
+}
+
+export const UiSafeLinearTeamListSchema = z
+  .object({
+    status: linearTeamListStatusSchema,
+    teams: z.array(UiSafeLinearTeamSchema).max(MAX_LINEAR_TEAMS).readonly(),
+    truncated: z.boolean(),
+  })
+  .strict();
+
+export const LinearProposalOutcome = [
+  "created", // a new pending card; `approval` is it
+  "already_pending", // this form was already submitted with the same content; `approval` is that card
+  "invalid_input", // a field is missing or out of bounds — nothing was proposed
+  "writes_off", // Linear writes are not on for this workspace — nothing was proposed
+  "unknown_team", // the team is not one of this workspace's Linear teams — nothing was proposed
+  "conflict", // this form was already submitted with DIFFERENT content — start a new issue
+  "unavailable", // Linear or the local store could not be reached — nothing was proposed; retry
+] as const;
+export const linearProposalOutcomeSchema = z.enum(LinearProposalOutcome);
+export type LinearProposalOutcome = z.infer<typeof linearProposalOutcomeSchema>;
+
+/**
+ * The result of proposing a Linear issue from the form. Never echoes the submitted content. Carries the card's
+ * UI-safe record when there is one, because NOTHING publishes approval.update in production (measured 2026-09-25):
+ * the renderer folds the record into its inbox itself, as it does for a decision.
+ */
+export interface UiSafeLinearProposalResult {
+  outcome: LinearProposalOutcome;
+  approval?: UiSafeApproval;
+}
+
+export const UiSafeLinearProposalResultSchema = z
+  .object({
+    outcome: linearProposalOutcomeSchema,
+    approval: UiSafeApprovalSchema.optional(),
   })
   .strict();
 
@@ -789,7 +870,10 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeTaskRollupSchema>, UiSafeTaskRollup>,
   Exact<z.infer<typeof UiSafeApprovalDetailSchema>, UiSafeApprovalDetail>,
   Exact<z.infer<typeof UiSafeSendNowResultSchema>, UiSafeSendNowResult>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+  Exact<z.infer<typeof UiSafeLinearTeamSchema>, UiSafeLinearTeam>,
+  Exact<z.infer<typeof UiSafeLinearTeamListSchema>, UiSafeLinearTeamList>,
+  Exact<z.infer<typeof UiSafeLinearProposalResultSchema>, UiSafeLinearProposalResult>,
+] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -826,6 +910,19 @@ export const UI_SAFE_ALLOWLIST = {
   schedule: ["entries"],
   taskRollupItem: ["dueDate", "priority", "projectRef", "status", "taskId", "title"],
   taskRollup: ["items"],
-  approvalDetail: ["approvalId", "descriptionLines", "descriptionTruncated", "priority", "refusal", "sendState", "targetSystem", "title"],
+  approvalDetail: [
+    "approvalId",
+    "descriptionLines",
+    "descriptionTruncated",
+    "priority",
+    "refusal",
+    "sendState",
+    "targetSystem",
+    "teamName",
+    "title",
+  ],
   sendNowResult: ["approvalId", "refusal", "sendState"],
+  linearTeam: ["id", "name"],
+  linearTeamList: ["status", "teams", "truncated"],
+  linearProposalResult: ["approval", "outcome"],
 } as const;

@@ -161,6 +161,8 @@ export const DROPPED_FIELD_NAMES = {
   dashboardCard: [] as string[],
   approvalDetail: ["payload", "teamId", "assigneeId", "dueDate", "workspaceId", "idempotencyKey", "payloadHash"],
   sendNowResult: ["payload", "workspaceId"],
+  linearTeamList: ["workspaceId", "organization", "key"],
+  linearProposalResult: ["title", "description", "payload", "teamId", "draft", "idempotencyKey", "workspaceId"],
 } as const;
 
 /**
@@ -183,6 +185,41 @@ export function taintedApprovalDetailSource(): Record<string, unknown> {
     workspaceId: SENTINEL_KEYCHAIN_REF,
     idempotencyKey: SENTINEL_PROVIDER_PROMPT,
     payloadHash: SENTINEL_SECRET,
+    ...TAINT,
+  };
+}
+
+/**
+ * A tainted team-list source (Linear slice 5a). ⚠ Like a card's title, a team NAME is shown on purpose (in its own
+ * workspace), so the sentinels ride only in keys the projector must not read — at the top level AND inside each team.
+ */
+export function taintedLinearTeamListSource(): Record<string, unknown> {
+  return {
+    status: "ready",
+    teams: [{ id: "team_leak_probe", name: "Probe team", key: SENTINEL_SECRET, organization: SENTINEL_EMPLOYER_RAW, ...TAINT }],
+    truncated: false,
+    workspaceId: SENTINEL_KEYCHAIN_REF,
+    organization: SENTINEL_EMPLOYER_RAW,
+    key: SENTINEL_SECRET,
+    ...TAINT,
+  };
+}
+
+/**
+ * A tainted proposal-result source (Linear slice 5a): the submitted content and keys beside the outcome, and a
+ * TAINTED domain approval as the card — the projector must carry the outcome and a narrow card, nothing else.
+ */
+export function taintedLinearProposalSource(): Record<string, unknown> {
+  return {
+    outcome: "created",
+    approval: taintedApproval(),
+    title: SENTINEL_EMPLOYER_RAW,
+    description: SENTINEL_EMPLOYER_RAW,
+    payload: { teamId: SENTINEL_SECRET, title: SENTINEL_EMPLOYER_RAW },
+    teamId: SENTINEL_SECRET,
+    draft: SENTINEL_PROVIDER_PROMPT,
+    idempotencyKey: SENTINEL_AGENT_LOG,
+    workspaceId: SENTINEL_KEYCHAIN_REF,
     ...TAINT,
   };
 }

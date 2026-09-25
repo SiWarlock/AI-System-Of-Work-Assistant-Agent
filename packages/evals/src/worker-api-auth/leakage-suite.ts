@@ -33,6 +33,8 @@ import {
   toUiSafeDashboardCard,
   toUiSafeApprovalDetail,
   toUiSafeSendNowResult,
+  toUiSafeLinearTeamList,
+  toUiSafeLinearProposalResult,
   type ApprovalDetailSource,
 } from "@sow/worker/api/projections/uiSafe";
 import { createStreamPublisher } from "@sow/worker/api/stream/eventClasses";
@@ -43,6 +45,8 @@ import {
   taintedDashboardCard,
   taintedApprovalDetailSource,
   taintedSendNowSource,
+  taintedLinearTeamListSource,
+  taintedLinearProposalSource,
   findLeakedSentinel,
   DROPPED_FIELD_NAMES,
 } from "./fixtures";
@@ -165,6 +169,24 @@ export function runLeakageSuite(): SuiteResult {
         toUiSafeSendNowResult(taintedSendNowSource() as unknown as Parameters<typeof toUiSafeSendNowResult>[0]),
         UI_SAFE_ALLOWLIST.sendNowResult,
         DROPPED_FIELD_NAMES.sendNowResult,
+      ),
+    );
+    // Linear slice 5a — the team list (names shown on purpose, in their own workspace) and a proposal's result,
+    // whose nested card is a TAINTED domain approval.
+    cases.push(
+      ...assertProjectionSafe(
+        "leak.query.linearTeamList",
+        toUiSafeLinearTeamList(taintedLinearTeamListSource() as unknown as Parameters<typeof toUiSafeLinearTeamList>[0]),
+        UI_SAFE_ALLOWLIST.linearTeamList,
+        DROPPED_FIELD_NAMES.linearTeamList,
+      ),
+    );
+    cases.push(
+      ...assertProjectionSafe(
+        "leak.query.linearProposalResult",
+        toUiSafeLinearProposalResult(taintedLinearProposalSource() as unknown as Parameters<typeof toUiSafeLinearProposalResult>[0]),
+        UI_SAFE_ALLOWLIST.linearProposalResult,
+        DROPPED_FIELD_NAMES.linearProposalResult,
       ),
     );
   } catch {

@@ -5,8 +5,21 @@
 // a team id, an assignee, a due date, a key) cannot ride out. The workspace check that decides WHETHER to serve
 // details at all lives in the port (step 4d); this file pins the SHAPE.
 import { describe, it, expect } from "vitest";
-import { UiSafeApprovalDetailSchema, UiSafeSendNowResultSchema, UI_SAFE_ALLOWLIST } from "@sow/contracts";
-import { toUiSafeApprovalDetail, toUiSafeSendNowResult, type ApprovalDetailSource } from "../../src/api/projections/uiSafe";
+import type { Approval } from "@sow/contracts";
+import {
+  UiSafeApprovalDetailSchema,
+  UiSafeSendNowResultSchema,
+  UiSafeLinearTeamListSchema,
+  UiSafeLinearProposalResultSchema,
+  UI_SAFE_ALLOWLIST,
+} from "@sow/contracts";
+import {
+  toUiSafeApprovalDetail,
+  toUiSafeSendNowResult,
+  toUiSafeLinearTeamList,
+  toUiSafeLinearProposalResult,
+  type ApprovalDetailSource,
+} from "../../src/api/projections/uiSafe";
 
 const NL = String.fromCharCode(0x0a);
 
@@ -73,5 +86,87 @@ describe("toUiSafeSendNowResult", () => {
     const out = toUiSafeSendNowResult({ approvalId: "idem_abc", sendState: "refused", refusal: "workspace_mismatch", ...({ payload: "x" } as object) });
     expect(out).toEqual({ approvalId: "idem_abc", sendState: "refused", refusal: "workspace_mismatch" });
     expect(UiSafeSendNowResultSchema.safeParse(out).success).toBe(true);
+  });
+});
+
+// Linear slice 5a — the team NAME on a card's details, the team list and a proposal's result.
+describe("toUiSafeApprovalDetail — the team name (Linear slice 5a)", () => {
+  const base: ApprovalDetailSource = { approvalId: "idem_abc", sendState: "writes_off", targetSystem: "linear", title: "T" };
+
+  it("shows the team NAME, collapsed to one line — never the team id", () => {
+    const out = toUiSafeApprovalDetail({ ...base, teamName: `Core${NL}Platform`, ...({ teamId: "team-SECRET" } as object) });
+    expect(out.teamName).toBe("Core Platform");
+    expect(JSON.stringify(out)).not.toContain("team-SECRET");
+    expect(UiSafeApprovalDetailSchema.safeParse(out).success).toBe(true);
+  });
+
+  it("drops a blank or non-string team name", () => {
+    expect(toUiSafeApprovalDetail({ ...base, teamName: "   " }).teamName).toBeUndefined();
+    expect(toUiSafeApprovalDetail({ ...base, teamName: 7 }).teamName).toBeUndefined();
+  });
+
+  it("⛔ a REFUSED detail carries no team name either", () => {
+    expect(toUiSafeApprovalDetail({ ...base, sendState: "refused", refusal: "payload_mismatch", teamName: "Core" }).teamName).toBeUndefined();
+  });
+});
+
+describe("toUiSafeLinearTeamList", () => {
+  it("copies each team's id and name only, collapsed to one line, and keeps the status and truncation", () => {
+    const out = toUiSafeLinearTeamList({
+      status: "ready",
+      teams: [
+        { id: "t1", name: `Core${NL}Platform`, ...({ key: "CORE", token: "lin_api_SECRET" } as object) },
+        { id: "t2", name: "Mobile" },
+      ],
+      truncated: true,
+    });
+    expect(out).toEqual({ status: "ready", teams: [{ id: "t1", name: "Core Platform" }, { id: "t2", name: "Mobile" }], truncated: true });
+    expect(UiSafeLinearTeamListSchema.safeParse(out).success).toBe(true);
+  });
+
+  it("drops a team with no id or no name rather than failing the whole list", () => {
+    const out = toUiSafeLinearTeamList({ status: "ready", teams: [{ id: "", name: "x" }, { id: "t", name: "  " }, { id: "ok", name: "Ok" }], truncated: false });
+    expect(out.teams).toEqual([{ id: "ok", name: "Ok" }]);
+  });
+
+  it("⛔ a list that is not ready carries NO teams", () => {
+    expect(toUiSafeLinearTeamList({ status: "writes_off", teams: [{ id: "t1", name: "Core" }], truncated: false })).toEqual({
+      status: "writes_off",
+      teams: [],
+      truncated: false,
+    });
+  });
+
+  it("keeps at most 100 teams and then says it truncated", () => {
+    const teams = Array.from({ length: 120 }, (_, i) => ({ id: `t${i}`, name: `Team ${i}` }));
+    const out = toUiSafeLinearTeamList({ status: "ready", teams, truncated: false });
+    expect(out.teams).toHaveLength(100);
+    expect(out.truncated).toBe(true);
+    expect(UiSafeLinearTeamListSchema.safeParse(out).success).toBe(true);
+  });
+});
+
+describe("toUiSafeLinearProposalResult", () => {
+  it("copies the outcome, and projects the card itself (actor and payload hash never cross)", () => {
+    const approval = {
+      id: "idem_new",
+      actionRef: "act",
+      subjectKind: "external_action",
+      workspaceId: "employer-work",
+      status: "pending",
+      actor: "owner-form",
+      channel: "mac",
+      payloadHash: "sha256:SECRET",
+    } as unknown as Approval;
+    const out = toUiSafeLinearProposalResult({ outcome: "created", approval, ...({ title: "T", payload: { teamId: "x" } } as object) });
+    expect(out).toEqual({
+      outcome: "created",
+      approval: { id: "idem_new", actionRef: "act", subjectKind: "external_action", workspaceId: "employer-work", status: "pending", channel: "mac", targetSystem: "linear" },
+    });
+    expect(JSON.stringify(out)).not.toContain("SECRET");
+    expect(UiSafeLinearProposalResultSchema.safeParse(out).success).toBe(true);
+  });
+  it("carries no card for an outcome that created none", () => {
+    expect(toUiSafeLinearProposalResult({ outcome: "writes_off" })).toEqual({ outcome: "writes_off" });
   });
 });

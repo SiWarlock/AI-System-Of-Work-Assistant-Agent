@@ -31,8 +31,19 @@ import type {
   UiSafeSendNowResult,
   ApprovalSendState,
   ApprovalSendRefusal,
+  UiSafeLinearTeam,
+  UiSafeLinearTeamList,
+  UiSafeLinearProposalResult,
+  LinearTeamListStatus,
+  LinearProposalOutcome,
 } from "@sow/contracts";
-import { collapseToSummaryLine, splitToSummaryLines, targetSystemSchema, UiSafeScheduleEntrySchema } from "@sow/contracts";
+import {
+  collapseToSummaryLine,
+  splitToSummaryLines,
+  targetSystemSchema,
+  UiSafeScheduleEntrySchema,
+  MAX_LINEAR_TEAMS,
+} from "@sow/contracts";
 import { permitsRawDrillDown } from "@sow/policy";
 
 /**
@@ -309,6 +320,8 @@ export interface ApprovalDetailSource {
   title?: unknown;
   description?: unknown;
   priority?: unknown;
+  /** Linear slice 5a — the team's NAME, resolved by the worker when the form proposed the issue. Never its id. */
+  teamName?: unknown;
 }
 
 /**
@@ -336,7 +349,43 @@ export function toUiSafeApprovalDetail(src: ApprovalDetailSource): UiSafeApprova
   if (typeof src.priority === "number" && Number.isInteger(src.priority) && src.priority >= 0 && src.priority <= 4) {
     out.priority = src.priority;
   }
+  if (typeof src.teamName === "string") {
+    const teamName = collapseToSummaryLine(src.teamName);
+    if (teamName.length > 0) out.teamName = teamName;
+  }
   return out;
+}
+
+/**
+ * Project the active workspace's Linear teams (Linear slice 5a). Copies each team's `id` and `name` only — named,
+ * no spread — collapsing the name to one line; a team without both is dropped rather than failing the list. ⛔ A
+ * list that is not `ready` carries NO teams. At most {@link MAX_LINEAR_TEAMS}; more ⇒ `truncated`, never silent.
+ */
+export function toUiSafeLinearTeamList(src: {
+  status: LinearTeamListStatus;
+  teams: readonly { id?: unknown; name?: unknown }[];
+  truncated: boolean;
+}): UiSafeLinearTeamList {
+  if (src.status !== "ready") return { status: src.status, teams: [], truncated: false };
+  const teams: UiSafeLinearTeam[] = [];
+  for (const t of src.teams) {
+    if (typeof t.id !== "string" || typeof t.name !== "string") continue;
+    const id = t.id.trim();
+    const name = collapseToSummaryLine(t.name);
+    if (id.length === 0 || id.length > 64 || name.length === 0) continue;
+    teams.push({ id, name });
+  }
+  const kept = teams.slice(0, MAX_LINEAR_TEAMS);
+  return { status: "ready", teams: kept, truncated: src.truncated || teams.length > kept.length };
+}
+
+/**
+ * Project a proposal's result (Linear slice 5a): the closed outcome and, when there is one, the card — projected
+ * HERE from the domain record through {@link toUiSafeApproval} (its target is Linear by construction), so the
+ * nested card is as narrow as every other approval the renderer sees. Nothing else.
+ */
+export function toUiSafeLinearProposalResult(src: { outcome: LinearProposalOutcome; approval?: Approval }): UiSafeLinearProposalResult {
+  return { outcome: src.outcome, ...(src.approval !== undefined ? { approval: toUiSafeApproval(src.approval, "linear") } : {}) };
 }
 
 /** Project a "Send now" result: the id, the re-read send state and a closed refusal reason — nothing else. */
