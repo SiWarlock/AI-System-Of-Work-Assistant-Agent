@@ -483,18 +483,53 @@ export const COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT = [
 ].join("\n");
 
 /**
- * Build the run's prompt + system prompt from the question + retrieved context. Pure. A job that holds the external
- * propose tools gets {@link COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT}; every other job keeps
- * {@link COPILOT_AGENT_SYSTEM_PROMPT} byte-for-byte.
+ * The system prompt of a job that holds ONLY `propose_knowledge` (§13.10a, a trusted, served, SEED-ONLY job: no gbrain
+ * read tools). The read-only prompt says "you must never propose a write", which such a job cannot obey. This one keeps
+ * every grounding rule (with the external prompt's "or the owner's own words" widening) and replaces that line with WHEN
+ * and HOW to propose a note: only when the owner explicitly asked; every value from the owner's words or the passages,
+ * else ask (REQ-F-017); never a path, a workspace or a percent (the worker derives them). The proposal is a PENDING
+ * card; KnowledgeWriter writes only after the owner approves it (rule 1).
+ */
+export const COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT = [
+  "You are the System of Work Copilot, a governed agent answering a question about ONE workspace.",
+  "You are given citationId-tagged context passages. You may also PROPOSE a project note (the project's status),",
+  "which is NEVER written by you: it becomes a card the owner must approve first.",
+  "",
+  "Rules:",
+  "- Ground every statement in the supplied passages. Cite each passage you rely on by its exact [citationId]",
+  "  tag, and cite ONLY passages that were supplied to you in this message.",
+  "- Do NOT invent, assume, or infer any fact — an owner, date, status, figure, or name — that the passages",
+  "  or the owner's own words do not state. If the answer is not in the context, say you could not find it and return no citations.",
+  "- Propose a note ONLY when the owner explicitly asked you to capture or update a project's status",
+  "  (e.g. \"mark Acme as paused\"). Otherwise answer only.",
+  "- Use propose_knowledge with projectId, title, lifecycleState and, only if you have one, summary.",
+  "  Never supply a path, a workspace or a percent: the system derives them.",
+  "- Take every value you supply only from the owner's own words or the passages. Never guess a project, a state,",
+  "  a date, a person or a figure. If you cannot tell which project or which state the owner means, ask the owner",
+  "  instead of proposing.",
+  "- You may not create, edit, or delete anything any other way.",
+  "- Never include secrets, credentials, access tokens, or raw file paths in your answer.",
+  '- Reply with the structured object { "answer": string[], "citations": [{ "citationId", "title" }] }.',
+].join("\n");
+
+/**
+ * Build the run's prompt + system prompt from the question + retrieved context. Pure. The system prompt follows the
+ * propose tool the job HOLDS: `external` ⇒ {@link COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT}; `knowledge` ⇒
+ * {@link COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT}; none ⇒ {@link COPILOT_AGENT_SYSTEM_PROMPT} byte-for-byte.
  */
 export function buildCopilotAgentPrompt(
   question: string,
   context: RetrievedContext,
-  opts: { readonly canProposeExternal?: boolean; readonly history?: CopilotHistory } = {},
+  opts: { readonly propose?: "external" | "knowledge"; readonly history?: CopilotHistory } = {},
 ): { prompt: string; systemPrompt: string } {
   return {
     prompt: buildCopilotUserPrompt(question, context, opts.history ?? NO_HISTORY),
-    systemPrompt: opts.canProposeExternal === true ? COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT : COPILOT_AGENT_SYSTEM_PROMPT,
+    systemPrompt:
+      opts.propose === "external"
+        ? COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT
+        : opts.propose === "knowledge"
+          ? COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT
+          : COPILOT_AGENT_SYSTEM_PROMPT,
   };
 }
 
@@ -947,8 +982,10 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
       const hasServers = Object.keys(mcpServers).length > 0;
       const transport = createClaudeAgentSdkTransport({
         promptBuilder: (): { prompt: string; systemPrompt: string } =>
+          // The prompt follows the GRANT (the tool the job really holds), never the policy alone. The two grants are
+          // mutually exclusive (a job whose policy lists both was refused above).
           buildCopilotAgentPrompt(prompt.question, prompt.context, {
-            canProposeExternal: proposeActionGranted,
+            propose: proposeActionGranted ? "external" : proposeKnowledgeGranted ? "knowledge" : undefined,
             ...(prompt.history !== undefined ? { history: prompt.history } : {}),
           }),
         outputSchema: COPILOT_OUTPUT_SCHEMA,

@@ -46,6 +46,7 @@ import {
   buildCopilotAgentPrompt,
   COPILOT_AGENT_SYSTEM_PROMPT,
   COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT,
+  COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT,
   createAgentRuntimeCopilotSynthesis,
   createClaudeAgentCopilotRunner,
   deriveCopilotContentTrust,
@@ -485,6 +486,65 @@ describe("buildCopilotAgentPrompt — the governed agentic prompt", () => {
   it("the system prompt states the grounding + no-invention contract", () => {
     expect(COPILOT_AGENT_SYSTEM_PROMPT.toLowerCase()).toContain("cite");
     expect(COPILOT_AGENT_SYSTEM_PROMPT.toLowerCase()).toMatch(/invent|assume|infer/);
+  });
+  it("selects the system prompt by the propose kind: none ⇒ read-only, external ⇒ external, knowledge ⇒ knowledge", () => {
+    expect(buildCopilotAgentPrompt("q", ctx()).systemPrompt).toBe(COPILOT_AGENT_SYSTEM_PROMPT);
+    expect(buildCopilotAgentPrompt("q", ctx(), { propose: "external" }).systemPrompt).toBe(COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT);
+    expect(buildCopilotAgentPrompt("q", ctx(), { propose: "knowledge" }).systemPrompt).toBe(
+      COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT,
+    );
+    // the user prompt never depends on the propose kind
+    expect(buildCopilotAgentPrompt("q", ctx(), { propose: "knowledge" }).prompt).toBe(buildCopilotAgentPrompt("q", ctx()).prompt);
+  });
+});
+
+// The knowledge-propose prompt (a job that holds ONLY propose_knowledge). The read-only prompt says "you must never
+// propose a write", which such a job cannot obey. This prompt keeps every grounding rule and says when and how to propose.
+describe("COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT — the note-propose job's prompt", () => {
+  const K = COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT;
+  const flat = K.replace(/\s+/g, " ");
+  const rules = (p: string): string[] => p.split("\n").slice(p.split("\n").indexOf("Rules:") + 1);
+
+  it("keeps every rule line of the read-only prompt; the one change is the owner's-words widening the external prompt has too", () => {
+    const readOnlyRules = rules(COPILOT_AGENT_SYSTEM_PROMPT);
+    const dropped = readOnlyRules.filter((l) => l.includes("READ-ONLY"));
+    expect(dropped).toEqual([
+      "- The tools are READ-ONLY: you may not create, edit, or delete anything, and you must never propose a write.",
+    ]);
+    const narrow = "  do not state. If the answer is not in the context, say you could not find it and return no citations.";
+    const widened =
+      "  or the owner's own words do not state. If the answer is not in the context, say you could not find it and return no citations.";
+    expect(readOnlyRules).toContain(narrow);
+    expect(COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT.split("\n")).toContain(widened);
+    for (const line of readOnlyRules) {
+      if (dropped.includes(line)) continue;
+      expect(K.split("\n")).toContain(line === narrow ? widened : line);
+    }
+  });
+
+  it("proposes only when the owner explicitly asked, through propose_knowledge, as a card the owner must approve", () => {
+    expect(flat).toMatch(/ONLY when the owner explicitly asked you to capture or update a project's status/);
+    expect(flat).toMatch(/Otherwise answer only\./);
+    expect(flat).toContain("propose_knowledge");
+    expect(flat).toMatch(/NEVER written by you: it becomes a card the owner must approve first/);
+    expect(flat).toContain("You may not create, edit, or delete anything any other way.");
+  });
+
+  it("never invents a value (REQ-F-017): every value from the owner's words or the passages; unclear ⇒ ask the owner", () => {
+    expect(flat).toMatch(/Take every value you supply only from the owner's own words or the passages/);
+    expect(flat).toMatch(/Never guess a project, a state, a date, a person or a figure/);
+    expect(flat).toMatch(/ask the owner instead of proposing/);
+  });
+
+  it("never supplies a path, a workspace or a percent (the system derives them)", () => {
+    expect(flat).toMatch(/Never supply a path, a workspace or a percent: the system derives them/);
+  });
+
+  it("⛔ says nothing a note-propose job cannot do: no 'never propose', no gbrain tools (seed-only), no external tools", () => {
+    expect(K).not.toContain("never propose a write");
+    expect(K).not.toMatch(/gbrain/i);
+    expect(K).not.toContain("propose_linear_issue");
+    expect(K).not.toContain("propose_action");
   });
 });
 
@@ -1386,11 +1446,9 @@ describe("createClaudeAgentCopilotRunner — §13.10a propose_knowledge grant (S
     expect(opts["allowedTools"]).not.toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
     const servers = opts["mcpServers"] as Record<string, unknown>;
     expect(servers["copilot"]).toBeDefined(); // the G3 server registered under the shared name
-    // ⛔ A knowledge-propose job must NOT get the EXTERNAL propose prompt (it holds no external tool; review
-    // 2026-09-25: a mutant giving it that prompt survived). ⚠ This pins TODAY's prompt, not a design: the read-only
-    // prompt says "never propose a write", which conflicts with the propose_knowledge tool the job holds — a gap
-    // since §13.10a, dormant while knowledge propose is off, tracked separately (critic 2026-09-25).
-    expect(opts["systemPrompt"]).toBe(COPILOT_AGENT_SYSTEM_PROMPT);
+    // ⛔ A knowledge-propose job gets the KNOWLEDGE prompt: not the read-only one (it says "never propose a write",
+    // which a job that holds propose_knowledge cannot obey) and not the EXTERNAL one (it holds no external tool).
+    expect(opts["systemPrompt"]).toBe(COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT);
   });
 
   it("does NOT grant propose_knowledge when the knowledge deps are absent (fail-closed)", async () => {
@@ -1408,6 +1466,8 @@ describe("createClaudeAgentCopilotRunner — §13.10a propose_knowledge grant (S
     // fail-closed: a propose-CAPABLE (trusted+scoped_write) job stays SEED-ONLY even without the grant deps —
     // it does NOT fall back to holding gbrain read tools (the seed-only strip keys on capability, not the grant).
     expect(opts["allowedTools"]).not.toContain("mcp__gbrain__query");
+    // the prompt follows the GRANT, not the policy: a job that holds no propose tool is told it is read-only.
+    expect(opts["systemPrompt"]).toBe(COPILOT_AGENT_SYSTEM_PROMPT);
   });
 
   it("REJECTS (invalid_job) a job whose policy grants BOTH propose tools (mutual exclusion on the shared server)", async () => {
@@ -1540,6 +1600,7 @@ describe("createClaudeAgentCopilotRunner — propose_linear_issue (Linear slice 
     const { cap, done } = run(proposeJob, { proposeSink: noopSink, buildProposeMcpServer: srv.build, linearProposeDeps: linearDeps(noopSink) });
     await done;
     const sp = String((cap.seen()?.options ?? {})["systemPrompt"]);
+    expect(sp).toBe(COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT); // byte-for-byte: never the knowledge prompt
     expect(sp).not.toContain("you must never propose a write");
     expect(sp).toContain("propose_linear_issue");
     expect(sp).toMatch(/only when the owner explicitly asked/i);
