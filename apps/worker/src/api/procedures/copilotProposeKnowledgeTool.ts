@@ -50,7 +50,8 @@ export const COPILOT_PROPOSE_KNOWLEDGE_TOOL_DESCRIPTION = [
   "This NEVER writes to the vault directly — it records a PENDING approval the owner must approve first.",
   "Supply: projectId (the project's stable id), title (its display title), lifecycleState (one of",
   "idea/planning/active/paused/done/archived), and an optional summary (candidate status prose).",
-  "Do not supply a path, workspace, or percent — those are derived. Use this only when the owner asked",
+  "Do not supply a path, workspace, or percent — the path and workspace are derived, and a note has no percent.",
+  "Use this only when the owner asked",
   "you to capture or update a project's status from the answer.",
 ].join(" ");
 

@@ -41,7 +41,8 @@ export const COPILOT_PROPOSE_KNOWLEDGE_TOOL_NAME = "propose_knowledge" as const;
 /**
  * The zod RAW SHAPE for the tool's input — model-facing ergonomics only (see the header: NOT the gate). It
  * mirrors `CopilotProjectProposeIntent` loosely so the model gets a helpful schema; the worker re-derives
- * strictly (NO path/workspace/percent — those are server-derived; a smuggled key is rejected there).
+ * strictly (NO path/workspace/percent — path and workspace are server-derived and a note has no percent; a smuggled
+ * key is rejected there).
  */
 export const PROPOSE_KNOWLEDGE_INPUT_SHAPE = {
   projectId: z.string().describe("The project's stable id (its note-path leaf). Not a path — the path is derived."),
@@ -92,7 +93,7 @@ export function buildCopilotProposeKnowledgeToolDefinition(
       "Propose a project note (its status) for the owner's approval.",
       "This NEVER writes to the vault directly — it records a PENDING approval the owner must approve first.",
       "Supply: projectId (the project's stable id), title, lifecycleState (idea/planning/active/paused/done/archived),",
-      "and an optional summary. Do NOT supply a path, workspace, or percent — those are derived.",
+      "and an optional summary. Do NOT supply a path, workspace, or percent — the path and workspace are derived, and a note has no percent.",
       "Use this only when the owner asked you to capture or update a project's status from the answer.",
     ].join(" "),
     PROPOSE_KNOWLEDGE_INPUT_SHAPE,

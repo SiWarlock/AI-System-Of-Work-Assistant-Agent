@@ -17,7 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { ok, err, isOk, isErr, failure, toolId, workspaceId, AgentJobSchema } from "@sow/contracts";
 import type { AgentJob, ProviderRoute, Result, FailureVariant } from "@sow/contracts";
-import { runtimeError, COPILOT_GBRAIN_PROXY_MCP_NAMES, COPILOT_VAULT_SERVER_NAME, COPILOT_VAULT_MCP_NAMES, COPILOT_SKILLS_SERVER_NAME, COPILOT_SKILLS_MCP_NAMES } from "@sow/providers";
+import { runtimeError, COPILOT_GBRAIN_PROXY_MCP_NAMES, COPILOT_VAULT_SERVER_NAME, COPILOT_VAULT_MCP_NAMES, COPILOT_SKILLS_SERVER_NAME, COPILOT_SKILLS_MCP_NAMES, PROPOSE_KNOWLEDGE_INPUT_SHAPE } from "@sow/providers";
 import type { AgentResult, RuntimeError, AgentQueryFn, CopilotGbrainProxyHandler, CopilotSkillsProxyHandler, McpServerConfig } from "@sow/providers";
 import {
   copilotReadToolIds,
@@ -505,7 +505,7 @@ describe("COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT — the note-propose job
   const flat = K.replace(/\s+/g, " ");
   const rules = (p: string): string[] => p.split("\n").slice(p.split("\n").indexOf("Rules:") + 1);
 
-  it("keeps every rule line of the read-only prompt; the one change is the owner's-words widening the external prompt has too", () => {
+  it("keeps every rule line of the read-only prompt but the READ-ONLY one; the invent line gets the external prompt's owner's-words widening", () => {
     const readOnlyRules = rules(COPILOT_AGENT_SYSTEM_PROMPT);
     const dropped = readOnlyRules.filter((l) => l.includes("READ-ONLY"));
     expect(dropped).toEqual([
@@ -536,11 +536,15 @@ describe("COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT — the note-propose job
     expect(flat).toMatch(/ask the owner instead of proposing/);
   });
 
-  it("never supplies a path, a workspace or a percent (the system derives them)", () => {
-    expect(flat).toMatch(/Never supply a path, a workspace or a percent: the system derives them/);
+  it("names the tool's own fields and never a path, a workspace or a percent (the system sets path and workspace; a note has no percent)", () => {
+    for (const field of Object.keys(PROPOSE_KNOWLEDGE_INPUT_SHAPE)) expect(K).toContain(field);
+    expect(flat).toMatch(
+      /Never supply a path, a workspace or a percent: the system sets the path and the workspace, and a note has no percent/,
+    );
   });
 
-  it("⛔ says nothing a note-propose job cannot do: no 'never propose', no gbrain tools (seed-only), no external tools", () => {
+  it("⛔ says nothing a note-propose job cannot do: not read-only, no 'never propose', no gbrain tools (seed-only), no external tools", () => {
+    expect(K).not.toMatch(/read-only/i);
     expect(K).not.toContain("never propose a write");
     expect(K).not.toMatch(/gbrain/i);
     expect(K).not.toContain("propose_linear_issue");
@@ -1301,6 +1305,8 @@ describe("createClaudeAgentCopilotRunner — the C5.3 propose grant (defense-in-
     await runner.run(proposeJob, prompt);
     const opts = cap.seen()?.options ?? {};
     expect(opts["allowedTools"]).not.toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
+    // the prompt follows the GRANT, not the policy: a job that holds no propose tool is told it is read-only.
+    expect(opts["systemPrompt"]).toBe(COPILOT_AGENT_SYSTEM_PROMPT);
   });
 
   it("a trusted+scoped_write job for a NON-served workspace ⇒ tool-less, no propose", async () => {
