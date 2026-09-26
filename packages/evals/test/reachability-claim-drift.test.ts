@@ -259,6 +259,14 @@ const CLAIMS: readonly Claim[] = [
     claimedAt: "apps/worker/src/composition/backends.ts (ProofSpineBackends.copilotChats)",
     says: "the saved-chats repository is built once, over the same migrated connection as the other repositories",
   },
+  {
+    // Added 2026-09-25 (Linear slice 5b.4c): the saved-chats list/open/delete port. Absent from boot, the API mounts the
+    // fail-closed UNAVAILABLE port and the Copilot's chat list shows nothing — silently.
+    symbol: "createCopilotChatsPort",
+    sites: 2,
+    claimedAt: "apps/worker/src/boot.ts (copilotChats binding) + apps/worker/src/api/server.ts (mounted under copilotChats)",
+    says: "bootWorker binds the real saved-chats port (one import + one call) and passes it to the API server",
+  },
 ];
 
 describe("reachability-claim drift guard", () => {

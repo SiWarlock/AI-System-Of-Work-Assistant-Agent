@@ -57,6 +57,11 @@ import {
   type LinearIssuePort,
 } from "./procedures/linearIssue";
 import {
+  buildCopilotChatsRouter,
+  UNAVAILABLE_COPILOT_CHATS_PORT,
+  type CopilotChatsPort,
+} from "./procedures/copilotChats";
+import {
   buildOnboardingRouter,
   type OnboardingCommandPort,
 } from "./procedures/onboarding";
@@ -126,6 +131,11 @@ export interface ApiServerDeps {
    * issue as a PENDING card. Optional: absent ⇒ every call fails closed as unavailable (never a faked team or card).
    */
   readonly linearIssue?: LinearIssuePort;
+  /**
+   * The Copilot's saved chats (Linear slice 5b.4c): list, open and delete a workspace's chats. Optional: absent ⇒ every
+   * call fails closed as unavailable (never a faked chat).
+   */
+  readonly copilotChats?: CopilotChatsPort;
   readonly streamPublisherOptions?: StreamPublisherOptions;
 }
 
@@ -160,6 +170,7 @@ function composeAppRouter(deps: ApiServerDeps, pushStream: PushStream) {
     egressCommand: buildEgressCommandRouter({ egressCommand: deps.egressCommand }),
     approvalSend: buildApprovalSendRouter({ approvalSend: deps.approvalSend ?? UNAVAILABLE_APPROVAL_SEND_PORT }),
     linearIssue: buildLinearIssueRouter({ linearIssue: deps.linearIssue ?? UNAVAILABLE_LINEAR_ISSUE_PORT }),
+    copilotChats: buildCopilotChatsRouter({ copilotChats: deps.copilotChats ?? UNAVAILABLE_COPILOT_CHATS_PORT }),
     presetProfiles: buildPresetProfilesRouter(),
     stream: pushStream.router,
   });

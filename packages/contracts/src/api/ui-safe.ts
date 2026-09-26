@@ -913,6 +913,96 @@ export const UiSafeLinearProposalResultSchema = z
   })
   .strict();
 
+// ── Linear slice 5b.4c — the Copilot's SAVED chats (owner decisions 2026-09-25) ──
+// Chats are saved in the worker's local store (they survive a restart), as a LIST of chats per workspace. Served only
+// for the workspace they belong to (the worker keys every read by (workspaceId, chatId)). A restored turn carries the
+// WHOLE gated answer, its egress notice included — task 9.25: a turn shown again must still say which cloud processor
+// made it. The owner's question is their own words, shown back to them in the same workspace.
+
+/** The most chats the list shows (the most recently used first). */
+export const MAX_COPILOT_CHATS = 50;
+/** The most turns one opened chat shows (the newest); older ones stay saved and `truncated` says so. */
+export const MAX_RESTORED_CHAT_TURNS = 100;
+/** The longest question the Copilot accepts — the worker's ask bound, shared so a restored turn fits the same rule. */
+export const MAX_COPILOT_QUESTION = 4000;
+
+/** One saved chat in the list. */
+export interface UiSafeCopilotChatSummary {
+  chatId: string;
+  /** The chat's first question, on one line. */
+  title: string;
+  /** ISO-8601 — when the chat's newest turn was saved. */
+  updatedAt: string;
+}
+
+export const UiSafeCopilotChatSummarySchema = z
+  .object({
+    chatId: uiSafeToken,
+    title: uiSafeSummaryLine,
+    updatedAt: z.string().datetime(),
+  })
+  .strict();
+
+/** A workspace's saved chats, most recently used first. */
+export interface UiSafeCopilotChatList {
+  chats: readonly UiSafeCopilotChatSummary[];
+}
+
+export const UiSafeCopilotChatListSchema = z
+  .object({
+    chats: z.array(UiSafeCopilotChatSummarySchema).max(MAX_COPILOT_CHATS).readonly(),
+  })
+  .strict();
+
+/** One restored turn: the owner's question and the Copilot's answer exactly as it passed the UI-safe gate. */
+export interface UiSafeCopilotChatTurn {
+  question: string;
+  answer: UiSafeCopilotAnswer;
+}
+
+export const UiSafeCopilotChatTurnSchema = z
+  .object({
+    question: z.string().min(1).max(MAX_COPILOT_QUESTION),
+    answer: UiSafeCopilotAnswerSchema,
+  })
+  .strict();
+
+/** One opened chat: its newest turns, oldest first. */
+export interface UiSafeCopilotChat {
+  chatId: string;
+  title: string;
+  turns: readonly UiSafeCopilotChatTurn[];
+  /** The chat holds older turns than these. */
+  truncated: boolean;
+}
+
+export const UiSafeCopilotChatSchema = z
+  .object({
+    chatId: uiSafeToken,
+    title: uiSafeSummaryLine,
+    turns: z.array(UiSafeCopilotChatTurnSchema).max(MAX_RESTORED_CHAT_TURNS).readonly(),
+    truncated: z.boolean(),
+  })
+  .strict();
+
+export const CopilotChatDeleteOutcome = [
+  "deleted", // the chat and all its turns are gone
+  "not_found", // no such chat in this workspace (already deleted, or never saved)
+] as const;
+export const copilotChatDeleteOutcomeSchema = z.enum(CopilotChatDeleteOutcome);
+export type CopilotChatDeleteOutcome = z.infer<typeof copilotChatDeleteOutcomeSchema>;
+
+/** The result of deleting a saved chat. */
+export interface UiSafeCopilotChatDeleteResult {
+  outcome: CopilotChatDeleteOutcome;
+}
+
+export const UiSafeCopilotChatDeleteResultSchema = z
+  .object({
+    outcome: copilotChatDeleteOutcomeSchema,
+  })
+  .strict();
+
 // ── Schema ⇄ interface parity guards (compile-time; erased at runtime) ───────
 // Each asserts the schema's inferred output EXACTLY equals its standalone
 // interface — so the interface and the runtime validator can never drift apart.
@@ -939,7 +1029,15 @@ const _uiSafeParity: [
   Exact<z.infer<typeof UiSafeLinearTeamSchema>, UiSafeLinearTeam>,
   Exact<z.infer<typeof UiSafeLinearTeamListSchema>, UiSafeLinearTeamList>,
   Exact<z.infer<typeof UiSafeLinearProposalResultSchema>, UiSafeLinearProposalResult>,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+  Exact<z.infer<typeof UiSafeCopilotChatSummarySchema>, UiSafeCopilotChatSummary>,
+  Exact<z.infer<typeof UiSafeCopilotChatListSchema>, UiSafeCopilotChatList>,
+  Exact<z.infer<typeof UiSafeCopilotChatTurnSchema>, UiSafeCopilotChatTurn>,
+  Exact<z.infer<typeof UiSafeCopilotChatSchema>, UiSafeCopilotChat>,
+  Exact<z.infer<typeof UiSafeCopilotChatDeleteResultSchema>, UiSafeCopilotChatDeleteResult>,
+] = [
+  true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+  true, true, true, true, true,
+];
 void _uiSafeParity;
 
 // ── Checked-in allowlist — THE source of truth ───────────────────────────────
@@ -993,4 +1091,9 @@ export const UI_SAFE_ALLOWLIST = {
   linearTeam: ["id", "name"],
   linearTeamList: ["status", "teams", "truncated"],
   linearProposalResult: ["approval", "outcome"],
+  copilotChatSummary: ["chatId", "title", "updatedAt"],
+  copilotChatList: ["chats"],
+  copilotChatTurn: ["answer", "question"],
+  copilotChat: ["chatId", "title", "truncated", "turns"],
+  copilotChatDeleteResult: ["outcome"],
 } as const;

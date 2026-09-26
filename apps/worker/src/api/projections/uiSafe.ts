@@ -36,6 +36,10 @@ import type {
   UiSafeLinearProposalResult,
   LinearTeamListStatus,
   LinearProposalOutcome,
+  UiSafeCopilotChatList,
+  UiSafeCopilotChatSummary,
+  UiSafeCopilotChat,
+  UiSafeCopilotChatTurn,
 } from "@sow/contracts";
 import {
   collapseToSummaryLine,
@@ -46,6 +50,11 @@ import {
   MAX_LINEAR_TEAMS,
   MAX_DETAIL_DESCRIPTION_LINES,
   isCalendarDate,
+  UiSafeCopilotAnswerSchema,
+  UiSafeCopilotChatSummarySchema,
+  UiSafeCopilotChatTurnSchema,
+  MAX_COPILOT_CHATS,
+  MAX_RESTORED_CHAT_TURNS,
 } from "@sow/contracts";
 import { permitsRawDrillDown } from "@sow/policy";
 
@@ -405,6 +414,57 @@ export function toUiSafeLinearTeamList(src: {
  */
 export function toUiSafeLinearProposalResult(src: { outcome: LinearProposalOutcome; approval?: Approval }): UiSafeLinearProposalResult {
   return { outcome: src.outcome, ...(src.approval !== undefined ? { approval: toUiSafeApproval(src.approval, "linear") } : {}) };
+}
+
+// ── Linear slice 5b.4c — the Copilot's SAVED chats (owner decisions 2026-09-25) ──
+
+/** A chat's title for display: one line, never blank. */
+const chatTitle = (t: unknown): string => {
+  const one = typeof t === "string" ? collapseToSummaryLine(t) : "";
+  return one.length > 0 ? one : "Chat";
+};
+
+/**
+ * Project a workspace's saved chats (most recently used first, as the store returns them): each row's id, a one-line
+ * title and its time — NAMED fields only, never the row's workspace. A row that breaks the contract is dropped, not the
+ * list; at most {@link MAX_COPILOT_CHATS}.
+ */
+export function toUiSafeCopilotChatList(rows: readonly { chatId: unknown; title: unknown; updatedAt: unknown }[]): UiSafeCopilotChatList {
+  const chats: UiSafeCopilotChatSummary[] = [];
+  for (const r of rows) {
+    if (chats.length >= MAX_COPILOT_CHATS) break;
+    const summary = { chatId: r.chatId, title: chatTitle(r.title), updatedAt: r.updatedAt };
+    if (UiSafeCopilotChatSummarySchema.safeParse(summary).success) chats.push(summary as UiSafeCopilotChatSummary);
+  }
+  return { chats };
+}
+
+/**
+ * Project one saved chat (its turns oldest first, as stored). ⛔ Task 9.25: each turn keeps its WHOLE gated answer —
+ * re-validated from the stored JSON against the answer contract, so the egress notice comes back with it. A turn that
+ * no longer validates is dropped. Keeps the newest {@link MAX_RESTORED_CHAT_TURNS}; `truncated` says older ones exist.
+ */
+export function toUiSafeCopilotChat(src: {
+  chatId: string;
+  title: string;
+  turns: readonly { question: unknown; answer: unknown }[];
+  truncated: boolean;
+}): UiSafeCopilotChat {
+  const newest = src.turns.slice(-MAX_RESTORED_CHAT_TURNS);
+  const turns: UiSafeCopilotChatTurn[] = [];
+  for (const t of newest) {
+    let answer: unknown;
+    try {
+      answer = typeof t.answer === "string" ? JSON.parse(t.answer) : undefined;
+    } catch {
+      continue;
+    }
+    const gated = UiSafeCopilotAnswerSchema.safeParse(answer);
+    if (!gated.success) continue;
+    const turn = { question: t.question, answer: gated.data };
+    if (UiSafeCopilotChatTurnSchema.safeParse(turn).success) turns.push(turn as UiSafeCopilotChatTurn);
+  }
+  return { chatId: src.chatId, title: chatTitle(src.title), turns, truncated: src.truncated || src.turns.length > newest.length };
 }
 
 /** Project a "Send now" result: the id, the re-read send state and a closed refusal reason — nothing else. */

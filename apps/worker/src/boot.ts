@@ -220,6 +220,8 @@ import { createApprovalSendPort } from "./composition/approvalSend";
 import type { ApprovalSendPort } from "./api/procedures/approvalSend";
 import { createLinearIssuePort, LINEAR_FORM_ACTOR, LINEAR_COPILOT_ACTOR } from "./composition/linearIssue";
 import type { LinearIssuePort } from "./api/procedures/linearIssue";
+import { createCopilotChatsPort } from "./composition/copilotChats";
+import type { CopilotChatsPort } from "./api/procedures/copilotChats";
 import { provisionDevWorkspace, type DevProvisionSpec } from "./composition/provisionDev";
 import { maybeSeedDemoData } from "./composition/demoSeed";
 import {
@@ -4167,6 +4169,12 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
       actor: LINEAR_FORM_ACTOR,
     }),
   });
+  // Linear slice 5b.4c — the Copilot's saved chats (owner decisions 2026-09-25: saved in the local store, a list of
+  // chats per workspace): list, open and delete, over the same chat store the ask saves to.
+  const copilotChats: CopilotChatsPort = createCopilotChatsPort({
+    chats: backends.copilotChats,
+    workspaceConfig: backends.repos.workspaceConfig,
+  });
   const dispatchApproval: DispatchApprovalFn =
     proofSpineParams !== undefined
       ? createApprovalDispatchRouter({
@@ -4252,6 +4260,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
     egressCommand,
     approvalSend,
     linearIssue,
+    copilotChats,
     now: backends.now,
     ...(config.apiHost !== undefined ? { host: config.apiHost } : {}),
     ...(config.apiPort !== undefined ? { port: config.apiPort } : {}),

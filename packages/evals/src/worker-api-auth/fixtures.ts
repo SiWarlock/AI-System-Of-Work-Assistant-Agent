@@ -165,6 +165,8 @@ export const DROPPED_FIELD_NAMES = {
   sendNowResult: ["payload", "workspaceId"],
   linearTeamList: ["workspaceId", "organization", "key"],
   linearProposalResult: ["title", "description", "payload", "teamId", "draft", "idempotencyKey", "workspaceId"],
+  copilotChatList: ["workspaceId", "createdAt"],
+  copilotChat: ["workspaceId", "turnId", "seq", "createdAt", "payload"],
 } as const;
 
 /**
@@ -223,6 +225,32 @@ export function taintedLinearProposalSource(): Record<string, unknown> {
     idempotencyKey: SENTINEL_AGENT_LOG,
     workspaceId: SENTINEL_KEYCHAIN_REF,
     ...TAINT,
+  };
+}
+
+/**
+ * Tainted saved-chat rows (Linear slice 5b.4c). ⚠ A chat's title, question and answer are shown on purpose (in their own
+ * workspace), so the sentinels ride only in keys the projector must not read — the row's workspace and times.
+ */
+export function taintedCopilotChatListRows(): Record<string, unknown>[] {
+  return [{ chatId: "chat_leak_probe", title: "Probe chat", updatedAt: "2026-09-25T10:00:00.000Z", workspaceId: SENTINEL_KEYCHAIN_REF, createdAt: SENTINEL_AGENT_LOG, ...TAINT }];
+}
+
+/**
+ * A tainted saved chat: sentinels beside each stored turn, AND one stored answer carrying an extra key (it must fail the
+ * answer contract and be dropped whole — never partly served).
+ */
+export function taintedCopilotChatSource(): Record<string, unknown> {
+  return {
+    chatId: "chat_leak_probe",
+    title: "Probe chat",
+    truncated: false,
+    workspaceId: SENTINEL_KEYCHAIN_REF,
+    ...TAINT,
+    turns: [
+      { question: "Probe question", answer: JSON.stringify({ answer: ["Probe answer"], citations: [] }), workspaceId: SENTINEL_KEYCHAIN_REF, turnId: SENTINEL_AGENT_LOG, seq: 1, ...TAINT },
+      { question: "Tainted answer", answer: JSON.stringify({ answer: ["x"], citations: [], payload: SENTINEL_EMPLOYER_RAW }) },
+    ],
   };
 }
 

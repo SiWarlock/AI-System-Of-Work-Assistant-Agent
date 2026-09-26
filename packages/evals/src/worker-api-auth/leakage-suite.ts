@@ -35,6 +35,8 @@ import {
   toUiSafeSendNowResult,
   toUiSafeLinearTeamList,
   toUiSafeLinearProposalResult,
+  toUiSafeCopilotChatList,
+  toUiSafeCopilotChat,
   type ApprovalDetailSource,
 } from "@sow/worker/api/projections/uiSafe";
 import { createStreamPublisher } from "@sow/worker/api/stream/eventClasses";
@@ -47,6 +49,8 @@ import {
   taintedSendNowSource,
   taintedLinearTeamListSource,
   taintedLinearProposalSource,
+  taintedCopilotChatListRows,
+  taintedCopilotChatSource,
   findLeakedSentinel,
   DROPPED_FIELD_NAMES,
 } from "./fixtures";
@@ -187,6 +191,24 @@ export function runLeakageSuite(): SuiteResult {
         toUiSafeLinearProposalResult(taintedLinearProposalSource() as unknown as Parameters<typeof toUiSafeLinearProposalResult>[0]),
         UI_SAFE_ALLOWLIST.linearProposalResult,
         DROPPED_FIELD_NAMES.linearProposalResult,
+      ),
+    );
+    // Linear slice 5b.4c — the Copilot's saved chats: the list and one opened chat (its title, questions and answers
+    // are shown on purpose; the row's workspace, ids and times are not, and a stored answer with an extra key is dropped).
+    cases.push(
+      ...assertProjectionSafe(
+        "leak.query.copilotChatList",
+        toUiSafeCopilotChatList(taintedCopilotChatListRows() as unknown as Parameters<typeof toUiSafeCopilotChatList>[0]),
+        UI_SAFE_ALLOWLIST.copilotChatList,
+        DROPPED_FIELD_NAMES.copilotChatList,
+      ),
+    );
+    cases.push(
+      ...assertProjectionSafe(
+        "leak.query.copilotChat",
+        toUiSafeCopilotChat(taintedCopilotChatSource() as unknown as Parameters<typeof toUiSafeCopilotChat>[0]),
+        UI_SAFE_ALLOWLIST.copilotChat,
+        DROPPED_FIELD_NAMES.copilotChat,
       ),
     );
   } catch {

@@ -20,6 +20,9 @@ import {
   UiSafeIngestionItemSchema,
   isErr,
   isOk,
+  ok,
+  err,
+  failure,
   type Approval,
   type HealthItem,
   type WorkflowRunRef,
@@ -497,6 +500,19 @@ describe("createApiServer — typed-error boundary (§16)", () => {
       expect(JSON.stringify(r.error)).not.toContain(WRONG.value);
       expect(JSON.stringify(r.error)).not.toContain(EXPECTED.value);
     }
+  });
+
+  it("Linear slice 5b.4c: the saved-chats router is mounted under copilotChats — bound port served, absent port fails closed", async () => {
+    const ctx = { token: EXPECTED.value, origin: "http://localhost:5173", host: "localhost:5173" };
+    const list = { chats: [{ chatId: "c1", title: "Login", updatedAt: "2026-09-25T10:00:00.000Z" }] };
+    const bound = createApiServer({
+      ...makeServerDeps(),
+      copilotChats: { list: async () => ok(list), get: async () => err(failure("validation_rejected", "x")), remove: async () => ok({ outcome: "deleted" as const }) },
+    }).createCaller(ctx);
+    expect(await bound.copilotChats.list({ workspaceId: "employer-work" })).toEqual(ok(list));
+    const unbound = createApiServer(makeServerDeps()).createCaller(ctx);
+    const r = await unbound.copilotChats.list({ workspaceId: "employer-work" });
+    expect(isErr(r) && r.error.cause?.code).toBe("COPILOT_CHATS_UNAVAILABLE");
   });
 
   it("a wrong-Origin call is rejected as a typed err (FORBIDDEN-equivalent), not a throw", async () => {

@@ -29,6 +29,13 @@ import {
   UiSafeLinearTeamSchema,
   UiSafeLinearTeamListSchema,
   UiSafeLinearProposalResultSchema,
+  UiSafeCopilotChatSummarySchema,
+  UiSafeCopilotChatListSchema,
+  UiSafeCopilotChatTurnSchema,
+  UiSafeCopilotChatSchema,
+  UiSafeCopilotChatDeleteResultSchema,
+  MAX_COPILOT_CHATS,
+  MAX_RESTORED_CHAT_TURNS,
   splitToSummaryLines,
   collapseToSummaryLine,
   LINEAR_DESCRIPTION_MAX,
@@ -80,6 +87,12 @@ const PROJECTIONS = [
   // The list schema carries a refinement (no teams unless ready), so its field set is read from the inner object.
   ["linearTeamList", UiSafeLinearTeamListSchema.innerType(), UI_SAFE_ALLOWLIST.linearTeamList] as const,
   ["linearProposalResult", UiSafeLinearProposalResultSchema, UI_SAFE_ALLOWLIST.linearProposalResult] as const,
+  // Linear slice 5b.4c — the Copilot's saved chats: the list, one chat (its turns), and the result of deleting one.
+  ["copilotChatSummary", UiSafeCopilotChatSummarySchema, UI_SAFE_ALLOWLIST.copilotChatSummary] as const,
+  ["copilotChatList", UiSafeCopilotChatListSchema, UI_SAFE_ALLOWLIST.copilotChatList] as const,
+  ["copilotChatTurn", UiSafeCopilotChatTurnSchema, UI_SAFE_ALLOWLIST.copilotChatTurn] as const,
+  ["copilotChat", UiSafeCopilotChatSchema, UI_SAFE_ALLOWLIST.copilotChat] as const,
+  ["copilotChatDeleteResult", UiSafeCopilotChatDeleteResultSchema, UI_SAFE_ALLOWLIST.copilotChatDeleteResult] as const,
 ] as const;
 
 describe("UI-safe projections — spec(§10 UI-safe projections / WS-8 leakage gate)", () => {
@@ -935,5 +948,53 @@ describe("UiSafeApprovalDetail — the assignee's name and the due date (Linear 
     for (const dueDate of ["2026-10-01T09:00:00Z", "next friday", "2026-1-1", ""]) {
       expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, dueDate }).success, dueDate).toBe(false);
     }
+  });
+});
+
+// Linear slice 5b.4c (owner decisions 2026-09-25): Copilot chats are SAVED in the local store, as a LIST of chats per
+// workspace. A restored turn carries the WHOLE gated answer — including its egress notice (task 9.25: a turn shown
+// again must still say which cloud processor made it). The owner's question is their own words, shown back to them.
+describe("UiSafeCopilotChat* — the saved chats (Linear slice 5b.4c)", () => {
+  const summary = { chatId: "3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b", title: "What is the login bug?", updatedAt: "2026-09-25T10:00:00.000Z" };
+  const answer = { answer: ["It loops."], citations: [{ citationId: "gbrain:n1", title: "Note" }], egressProcessor: "claude" };
+
+  it("a chat summary is an id, a one-line title and a time — nothing else", () => {
+    expect(UiSafeCopilotChatSummarySchema.safeParse(summary).success).toBe(true);
+    expect(UiSafeCopilotChatSummarySchema.safeParse({ ...summary, workspaceId: "w" }).success).toBe(false);
+    expect(UiSafeCopilotChatSummarySchema.safeParse({ ...summary, title: "two\nlines" }).success).toBe(false);
+    expect(UiSafeCopilotChatSummarySchema.safeParse({ ...summary, updatedAt: "yesterday" }).success).toBe(false);
+    expect(UiSafeCopilotChatSummarySchema.safeParse({ ...summary, chatId: "x".repeat(65) }).success).toBe(false);
+  });
+
+  it(`a chat list holds at most ${String(MAX_COPILOT_CHATS)} chats`, () => {
+    expect(UiSafeCopilotChatListSchema.safeParse({ chats: [summary] }).success).toBe(true);
+    expect(UiSafeCopilotChatListSchema.safeParse({ chats: Array.from({ length: MAX_COPILOT_CHATS + 1 }, () => summary) }).success).toBe(false);
+    expect(MAX_COPILOT_CHATS).toBe(50);
+  });
+
+  it("⛔ 9.25: a restored turn keeps the whole gated answer, its egress notice included", () => {
+    const t = UiSafeCopilotChatTurnSchema.safeParse({ question: "What is\nthe login bug?", answer });
+    expect(t.success).toBe(true);
+    expect(t.success && t.data.answer.egressProcessor).toBe("claude");
+    expect(UiSafeCopilotChatTurnSchema.safeParse({ question: "", answer }).success).toBe(false);
+    expect(UiSafeCopilotChatTurnSchema.safeParse({ question: "x".repeat(4001), answer }).success).toBe(false);
+    expect(UiSafeCopilotChatTurnSchema.safeParse({ question: "q", answer: { ...answer, payload: "x" } }).success).toBe(false);
+    expect(UiSafeCopilotChatTurnSchema.safeParse({ question: "q", answer, workspaceId: "w" }).success).toBe(false);
+  });
+
+  it(`a chat carries at most ${String(MAX_RESTORED_CHAT_TURNS)} turns, and says when it holds older ones`, () => {
+    const turn = { question: "q", answer };
+    expect(UiSafeCopilotChatSchema.safeParse({ chatId: summary.chatId, title: "t", turns: [turn], truncated: false }).success).toBe(true);
+    expect(UiSafeCopilotChatSchema.safeParse({ chatId: summary.chatId, title: "t", turns: [turn] }).success).toBe(false);
+    expect(
+      UiSafeCopilotChatSchema.safeParse({ chatId: summary.chatId, title: "t", turns: Array.from({ length: MAX_RESTORED_CHAT_TURNS + 1 }, () => turn), truncated: true }).success,
+    ).toBe(false);
+    expect(MAX_RESTORED_CHAT_TURNS).toBe(100);
+  });
+
+  it("deleting a chat answers with a closed outcome", () => {
+    for (const outcome of ["deleted", "not_found"]) expect(UiSafeCopilotChatDeleteResultSchema.safeParse({ outcome }).success).toBe(true);
+    expect(UiSafeCopilotChatDeleteResultSchema.safeParse({ outcome: "archived" }).success).toBe(false);
+    expect(UiSafeCopilotChatDeleteResultSchema.safeParse({ outcome: "deleted", chatId: "c" }).success).toBe(false);
   });
 });

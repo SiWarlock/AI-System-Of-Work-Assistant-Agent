@@ -21,6 +21,15 @@ describe("bootWorker's Copilot chat memory binding", () => {
     expect(call).toContain("chats: createCopilotChatMemory(backends.copilotChats, backends.now),");
   });
 
+  it("the saved-chats port (list / open / delete, slice 5b.4c) is built over the same store and handed to the API", () => {
+    const start = BOOT.indexOf("const copilotChats: CopilotChatsPort = createCopilotChatsPort({");
+    expect(start).toBeGreaterThan(-1); // positive control
+    const call = BOOT.slice(start, BOOT.indexOf("\n  });", start));
+    expect(call).toContain("chats: backends.copilotChats,");
+    expect(call).toContain("workspaceConfig: backends.repos.workspaceConfig,");
+    expect(BOOT).toMatch(/linearIssue,\s*\n\s*copilotChats,\s*\n\s*now: backends\.now,/);
+  });
+
   it("the backends' chat store runs on the MIGRATED database: a saved turn reads back, in its own workspace only", async () => {
     const backends = await assembleBackends({ dbPath: ":memory:" });
     try {
