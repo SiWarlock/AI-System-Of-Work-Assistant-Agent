@@ -37,6 +37,7 @@ import type {
   AuditPersisting,
   AuditPersistPort,
   CandidateCopilotAnswer,
+  CopilotChatMemory,
   CopilotDeps,
   CopilotRetrievalPort,
   CopilotSynthesisPort,
@@ -55,6 +56,7 @@ import { createProvenanceStampingRetrieval } from "./copilotProvenanceStamp";
 import type { CopilotServingOracle } from "./copilotProvenanceStamp";
 import { createVaultPassageRetrieval } from "./copilotVaultPassageRetrieval";
 import type { CommittedVaultReader } from "./servingContextLoader";
+import { NO_HISTORY, renderCopilotHistoryBlock, type CopilotHistory } from "./copilotChatHistory";
 
 /**
  * The governed Copilot system prompt. Encodes the grounding contract: answer ONLY from the supplied
@@ -112,9 +114,15 @@ export const DEFAULT_COPILOT_MAX_COST_USD = 0.25;
  * citationId can't be cited, and showing it would invite ungrounded claims; a source with no matching
  * block gets an explicit "(no excerpt available)". The real GBrain retrieval (P3) should return
  * block↔source as aligned pairs so neither arm triggers — tracked as a `RetrievedContext` restructure.
+ *
+ * Linear slice 5b.4b — `history` (the same chat's earlier messages, owner decision 2026-09-25) goes in a section BEFORE
+ * "Question:", one JSON-string line per message with the role the worker set (`renderCopilotHistoryBlock`). It is
+ * never a passage: nothing of it follows "Context passages:", and a citation the model takes from it is dropped
+ * (citations are reconciled against the retrieved sources only). Empty history ⇒ the prompt is byte-identical to a
+ * chat with no memory.
  */
-export function buildCopilotUserPrompt(question: string, context: RetrievedContext): string {
-  const lines: string[] = ["Question:", question, ""];
+export function buildCopilotUserPrompt(question: string, context: RetrievedContext, history: CopilotHistory = NO_HISTORY): string {
+  const lines: string[] = [...renderCopilotHistoryBlock(history), "Question:", question, ""];
   if (context.sources.length === 0) {
     lines.push("Context passages: (no context was retrieved for this workspace)");
     return lines.join("\n");
@@ -245,6 +253,7 @@ export function createClaudeCopilotSynthesis(
       question: string,
       context: RetrievedContext,
       route: ProviderRoute,
+      history: CopilotHistory = NO_HISTORY,
     ): Promise<Result<CandidateCopilotAnswer, FailureVariant>> => {
       // Fail-closed defense-in-depth over the egress veto (safety rule 5): the subscription client
       // ALWAYS ships the prompt (inline employer content) to Anthropic's cloud, so this adapter serves
@@ -262,7 +271,7 @@ export function createClaudeCopilotSynthesis(
       const request: CompletionRequest = {
         model: route.model,
         systemPrompt: COPILOT_SYSTEM_PROMPT,
-        userPrompt: buildCopilotUserPrompt(question, context),
+        userPrompt: buildCopilotUserPrompt(question, context, history),
         outputSchema: COPILOT_OUTPUT_SCHEMA,
         maxCostUsd,
         betas,
@@ -486,6 +495,11 @@ export interface CopilotDepsOptions {
    */
   readonly auditPersist: AuditPersistPort;
   /**
+   * OPTIONAL (Linear slice 5b.4b) the saved-chats memory the ask reads and saves (owner decision 2026-09-25: chats
+   * are saved in the local store). Absent ⇒ no chat memory. Boot binds `createCopilotChatMemory` over the store.
+   */
+  readonly chats?: CopilotChatMemory;
+  /**
    * OPTIONAL (§9.6 — the passage read-model) a real {@link CommittedVaultReader} (the existing C5.4b
    * seam, servingContextLoader.ts). When present, it REPLACES the always-empty per-workspace fixture
    * as the non-gbrain retrieval — `createVaultPassageRetrieval` reads ALREADY-COMMITTED vault Markdown
@@ -583,5 +597,6 @@ export function buildCopilotDeps(opts: CopilotDepsOptions): AuditPersisting<Copi
     // 24.7 — always populated (the type's `auditPersist` is required); `runGovernedCopilotSynthesis`
     // persists the egress-veto deny through it regardless of realCopilot/interim.
     auditPersist: opts.auditPersist,
+    ...(opts.chats !== undefined ? { chats: opts.chats } : {}),
   };
 }

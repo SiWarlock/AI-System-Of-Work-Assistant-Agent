@@ -21,6 +21,7 @@ import {
   type RetrievedContext,
   type RetrievedSource,
 } from "./copilot";
+import { NO_HISTORY } from "./copilotChatHistory";
 
 /** A port result that may be delivered synchronously (a fake) or async (@sow/db-backed). */
 type MaybeAsyncResult<T> = Result<T, FailureVariant> | Promise<Result<T, FailureVariant>>;
@@ -83,7 +84,8 @@ export async function answerCopilotBriefing(
   // here — the guarantee evaporates and NOTHING FAILS: no test reds, no type complains, and
   // briefing's denials go unpersisted exactly as they did before 24.7. Re-establish coverage
   // before changing this call's shape.
-  return runGovernedCopilotSynthesis(deps, input.workspaceId, BRIEFING_DIRECTIVE, scoped.value);
+  // A briefing is not a chat: it states NO_HISTORY (the parameter is required, so memory is never passed by accident).
+  return runGovernedCopilotSynthesis(deps, input.workspaceId, BRIEFING_DIRECTIVE, scoped.value, NO_HISTORY);
 }
 
 /** Interim fixture-backed briefing retrieval (tests + honest boot interim). Mirrors createFixtureRetrieval. */

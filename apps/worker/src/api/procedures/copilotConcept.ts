@@ -8,6 +8,7 @@
 import { isOk } from "@sow/contracts";
 import type { FailureVariant, Result, UiSafeCopilotAnswer } from "@sow/contracts";
 import { enforceRetrievalScope, runGovernedCopilotSynthesis, type CopilotDeps } from "./copilot";
+import { NO_HISTORY } from "./copilotChatHistory";
 
 /** The on-request concept-synthesis input — the workspace + the (bounded) client concept term. */
 export interface CopilotConceptInput {
@@ -39,5 +40,5 @@ export async function answerCopilotConcept(
   if (!isOk(retrieved)) return retrieved; // unknown workspace / retrieval failure → fail closed (WS-8)
   const scoped = enforceRetrievalScope(input.workspaceId, retrieved.value);
   if (!isOk(scoped)) return scoped; // defense-in-depth — a foreign-scoped context is rejected
-  return runGovernedCopilotSynthesis(deps, input.workspaceId, conceptDirective(input.concept), scoped.value);
+  return runGovernedCopilotSynthesis(deps, input.workspaceId, conceptDirective(input.concept), scoped.value, NO_HISTORY); // not a chat
 }

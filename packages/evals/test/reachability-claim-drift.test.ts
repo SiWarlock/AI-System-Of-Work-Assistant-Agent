@@ -230,6 +230,35 @@ const CLAIMS: readonly Claim[] = [
     claimedAt: "apps/worker/src/boot.ts (approvalSend binding) + apps/worker/src/api/server.ts (mounted under approvalSend)",
     says: "bootWorker binds the real approval send port (one import + one call) and passes it to the API server",
   },
+  {
+    // Added 2026-09-25 (Linear slice 5b.4b): chat memory is the owner's rule-6 exception 2 ("Full history"). Its
+    // narrowness rests on the history being built in ONE place — the ask, from the chat read by the REQUEST's own
+    // workspace — and entering a prompt in ONE place, before "Question:". A second caller would widen the exception.
+    symbol: "historyFromTurns",
+    sites: 2,
+    claimedAt: "apps/worker/src/api/procedures/copilotChatHistory.ts (header) + apps/worker/src/api/procedures/copilot.ts (answerCopilotQuestion)",
+    says: "the chat history is built only in answerCopilotQuestion, from the chat read by the ask's own workspace",
+  },
+  {
+    symbol: "renderCopilotHistoryBlock",
+    sites: 2,
+    claimedAt: "apps/worker/src/api/procedures/copilotClaudeSynthesis.ts (buildCopilotUserPrompt docstring)",
+    says: "the history enters a prompt only in buildCopilotUserPrompt, before 'Question:' — never as a passage",
+  },
+  {
+    // Added 2026-09-25 (Linear slice 5b.4b): the saved chats (owner: saved in the local store). Absent from boot, the
+    // ask silently has no memory; built twice, two stores could disagree about a chat.
+    symbol: "createCopilotChatMemory",
+    sites: 2,
+    claimedAt: "apps/worker/src/boot.ts (buildCopilotDeps chats binding) + apps/worker/test/boot/copilotChatBind.test.ts",
+    says: "bootWorker binds the Copilot chat memory once, over the backends' chat store",
+  },
+  {
+    symbol: "createSqliteCopilotChatRepository",
+    sites: 2,
+    claimedAt: "apps/worker/src/composition/backends.ts (ProofSpineBackends.copilotChats)",
+    says: "the saved-chats repository is built once, over the same migrated connection as the other repositories",
+  },
 ];
 
 describe("reachability-claim drift guard", () => {

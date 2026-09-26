@@ -130,6 +130,7 @@ import {
 import { createLogger, type Logger, type LogSink } from "../observability/logger";
 import type { LinearTeamsRead } from "@sow/integrations/tools/adapters/linear-teams";
 import type { LinearViewerRead, LinearMemberMatch } from "@sow/integrations/tools/adapters/linear-people";
+import { createSqliteCopilotChatRepository, type CopilotChatRepository } from "@sow/db/repositories/copilotChats";
 import { createOperationalBackupPorts } from "../backup/backup-ports";
 import type { OpDbBackupPort, TemporalPersistenceBackupPort } from "../backup/operational-backup";
 import { selectProviderRunner, selectHealthSources, type ProviderTransportGate } from "./provider-runner";
@@ -932,6 +933,11 @@ export function createStubIndexApplyClient(): IndexApplyClient {
 export interface ProofSpineBackends {
   /** The live sqlite operational store (write_receipts + genesis migrated). */
   readonly repos: SqliteRepositories;
+  /**
+   * Linear slice 5b.4b — the Copilot's SAVED chats (migration 0019), over the SAME migrated connection as `repos`.
+   * A standalone repository (not in `createSqliteRepositories`); every method is keyed by (workspaceId, chatId).
+   */
+  readonly copilotChats: CopilotChatRepository;
   /** The @sow/integrations ReceiptStore over the @sow/db write-receipt repo. */
   readonly receiptStore: ReceiptStore;
   /** The filesystem-backed vault the KnowledgeWriter commits under. */
@@ -1089,6 +1095,7 @@ export async function assembleBackends(
 
   return {
     repos: opened.repos,
+    copilotChats: createSqliteCopilotChatRepository(opened.db as never),
     receiptStore,
     vault,
     healthItems,

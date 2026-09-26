@@ -94,6 +94,7 @@ import {
   COPILOT_OUTPUT_SCHEMA,
   DEFAULT_COPILOT_BETAS,
 } from "./copilotClaudeSynthesis";
+import { NO_HISTORY, type CopilotHistory } from "./copilotChatHistory";
 
 // ── the C1 ToolId → SDK MCP tool-name mapping ─────────────────────────────────
 //
@@ -253,9 +254,10 @@ export type CopilotAgentCapability = "read_only" | "propose" | "propose_knowledg
  * the ENTIRE tool-reachable content surface is trusted-provenance — derived PER-CONTENT (see
  * `deriveCopilotContentTrust`), enforced by the runner's SEED-ONLY strip. If ANY reachable passage is
  * untrusted-provenance, `contentTrust` MUST be `"untrusted"`, or the ING-7 bypass the C4 review closed re-opens.
- * ⛔ ONE OWNER-AUTHORIZED EXCEPTION (2026-09-25, rule 6): `propose_linear_issue` may return the workspace's Linear team
- * NAMES mid-run (names only, one line each, at most 100; the owner's Approve bounds it) — imported text this verdict
- * does not see, by decision. See ARCHITECTURE.md "Owner-authorized ING-7 exceptions". No OTHER mid-run content.
+ * ⛔ TWO OWNER-AUTHORIZED EXCEPTIONS (2026-09-25, rule 6), text this verdict does not see, by decision: (1)
+ * `propose_linear_issue` may return the workspace's Linear team NAMES mid-run (names only, one line each, at most 100);
+ * (2) the prompt may carry the SAME chat's history (the owner's questions + the Copilot's earlier gated answers —
+ * `copilotChatHistory.ts`). The owner's Approve bounds both. See ARCHITECTURE.md "Owner-authorized ING-7 exceptions".
  */
 export function resolveCopilotAgentCapability(params: {
   readonly contentTrust: CopilotContentTrust;
@@ -280,9 +282,10 @@ export function resolveCopilotAgentCapability(params: {
  * This is sound at BUILD TIME **only because a propose job is SEED-ONLY**: the runner STRIPS the gbrain read
  * tools from a propose-capable job (see `createClaudeAgentCopilotRunner`), so the tool-reachable content
  * surface equals the seed this function inspects — closing the live-read TOCTOU (a propose agent cannot fetch
- * more/untrusted content mid-run) — EXCEPT the owner-authorized team-names answer of `propose_linear_issue` (rule-6
- * exception 1, 2026-09-25; bounded, and every card still needs the owner's Approve). Do NOT grant a propose job the
- * gbrain read tools without moving trust to a read-time hook, or this build-time verdict becomes unsound again.
+ * more/untrusted content mid-run) — EXCEPT the owner-authorized team-names answer of `propose_linear_issue` and the
+ * same chat's history in the prompt (rule-6 exceptions 1 and 2, 2026-09-25; bounded, and every card still needs the
+ * owner's Approve). Do NOT grant a propose job the gbrain read tools without moving trust to a read-time hook, or this
+ * build-time verdict becomes unsound again.
  *
  * NOTE (current reality): the live gbrain retrieval adapters do not yet PROVE KnowledgeWriter authorship, so
  * they leave `provenance` ABSENT (⇒ treated as `unknown`) and this returns `"untrusted"` for every live ask
@@ -487,10 +490,10 @@ export const COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT = [
 export function buildCopilotAgentPrompt(
   question: string,
   context: RetrievedContext,
-  opts: { readonly canProposeExternal?: boolean } = {},
+  opts: { readonly canProposeExternal?: boolean; readonly history?: CopilotHistory } = {},
 ): { prompt: string; systemPrompt: string } {
   return {
-    prompt: buildCopilotUserPrompt(question, context),
+    prompt: buildCopilotUserPrompt(question, context, opts.history ?? NO_HISTORY),
     systemPrompt: opts.canProposeExternal === true ? COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT : COPILOT_AGENT_SYSTEM_PROMPT,
   };
 }
@@ -550,6 +553,11 @@ export function mapAgentResultToCandidate(
 export interface CopilotPromptContext {
   readonly question: string;
   readonly context: RetrievedContext;
+  /**
+   * Linear slice 5b.4b — the same chat's earlier messages (owner decision 2026-09-25, rule-6 exception 2). Goes into
+   * the USER prompt only; never into the context, the trust verdict or the tool grant. Absent ⇒ no memory.
+   */
+  readonly history?: CopilotHistory;
 }
 
 /**
@@ -611,10 +619,12 @@ export function createAgentRuntimeCopilotSynthesis(
       question: string,
       context: RetrievedContext,
       route: ProviderRoute,
+      history: CopilotHistory = NO_HISTORY,
     ): Promise<Result<CandidateCopilotAnswer, FailureVariant>> => {
       const runtimeRoute = toClaudeAgentRuntimeRoute(route);
       if (!isOk(runtimeRoute)) return runtimeRoute;
       // Content-derived capability (C5.1/C5.3): a propose job is granted ONLY on affirmed-trusted content.
+      // ⛔ The CONTEXT alone — never the chat history (slice 5b.4b): history is not a source and never makes a job trusted.
       const contentTrust = resolveContentTrust(context);
       const job = buildCopilotAgentJob(workspaceId, runtimeRoute.value, { contentTrust, proposeEnabled, knowledgeProposeEnabled });
       // ING-7 admission (C4) BEFORE the runner — fail closed on an untrusted+mutating or impure-read_only job.
@@ -626,7 +636,9 @@ export function createAgentRuntimeCopilotSynthesis(
         if (auditPersist !== undefined && audit !== undefined) await auditPersist.persistDenial(audit, workspaceId);
         return admitted;
       }
-      const run = await runner.run(admitted.value, { question, context });
+      // History rides the prompt only (the owner's exception 2 covers every job kind). No history ⇒ the prompt context is
+      // exactly {question, context}, as before slice 5b.4b.
+      const run = await runner.run(admitted.value, { question, context, ...(history.length > 0 ? { history } : {}) });
       if (!isOk(run)) return err(foldRuntimeError(run.error));
       return mapAgentResultToCandidate(run.value, context);
     },
@@ -832,7 +844,8 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
       // tools. Its tool-reachable content surface is the pre-verified seed (which `deriveCopilotContentTrust`
       // already proved all KnowledgeWriter), so it cannot fetch more/untrusted content mid-run — closing the
       // live-read TOCTOU that would make a build-time trust verdict unsound — EXCEPT the Linear team NAMES that
-      // `propose_linear_issue` may return (the owner's rule-6 exception 1, 2026-09-25; bounded + Approve-gated). This
+      // `propose_linear_issue` may return and the same chat's history in the prompt (the owner's rule-6 exceptions 1
+      // and 2, 2026-09-25; bounded + Approve-gated). This
       // keys on `trustedScopedWrite` (propose-CAPABLE), NOT on the grant firing: if the propose deps are absent
       // the job stays seed-only + tool-less (fail-closed) rather than falling back to holding read tools. Only a
       // NON-propose served job reads gbrain (WS-8: only the served workspace; a non-served workspace is tool-less).
@@ -934,7 +947,10 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
       const hasServers = Object.keys(mcpServers).length > 0;
       const transport = createClaudeAgentSdkTransport({
         promptBuilder: (): { prompt: string; systemPrompt: string } =>
-          buildCopilotAgentPrompt(prompt.question, prompt.context, { canProposeExternal: proposeActionGranted }),
+          buildCopilotAgentPrompt(prompt.question, prompt.context, {
+            canProposeExternal: proposeActionGranted,
+            ...(prompt.history !== undefined ? { history: prompt.history } : {}),
+          }),
         outputSchema: COPILOT_OUTPUT_SCHEMA,
         // Empty for a non-served workspace ⇒ `buildCanUseTool([])` denies every tool (deny-all).
         allowedToolNames: toolNames,

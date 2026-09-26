@@ -249,15 +249,21 @@ function parseProjectInput(value: unknown): ProjectInput {
  *  real GBrain/model adapter's prompt-size / cost surface — the interim stub ignores the text). */
 const MAX_QUESTION_CHARS = 4000;
 
+/** A chat id is opaque (the renderer mints a UUID): letters, digits, "-" and "_", at most 64 (Linear slice 5b.4b). */
+const CHAT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 /** tRPC plain-function validator narrowing an unknown payload → CopilotAskInput (§4.6). */
 function parseAskInput(value: unknown): CopilotAskInput {
   if (typeof value !== "object" || value === null) throw new Error("invalid_input");
   const source = value as Record<string, unknown>;
   const question = requireString(source, "question");
   if (question.length > MAX_QUESTION_CHARS) throw new Error("invalid_input");
+  const chatId = source["chatId"];
+  if (chatId !== undefined && (typeof chatId !== "string" || !CHAT_ID.test(chatId))) throw new Error("invalid_input");
   return {
     workspaceId: requireString(source, "workspaceId"),
     question,
+    ...(chatId !== undefined ? { chatId } : {}),
   };
 }
 
@@ -774,10 +780,12 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
     ),
 
     /**
-     * Copilot Q&A (§4.6) — READ-ONLY, cited, NO side effects. Retrieves a SINGLE workspace's
+     * Copilot Q&A (§4.6) — cited; no external write and no Markdown write. Retrieves a SINGLE workspace's
      * knowledge (WS-8; unknown/foreign workspace → typed err, fail-closed), synthesizes a candidate
      * answer, and gates it through `UiSafeCopilotAnswerSchema` before serving. An implied action
-     * becomes a proposal routed to Approvals — never a direct write.
+     * becomes a proposal routed to Approvals — never a direct write. ⚠ Linear slice 5b.4b: with a
+     * `chatId`, the ask reads that chat's memory and SAVES the answered turn to the workspace's local
+     * chat store — the one exception to this file's "no side effects" header.
      */
     /**
      * Copilot on-request briefing (C6 §13.10 b-1) — READ-ONLY, cited, NO side effects. Assembles the

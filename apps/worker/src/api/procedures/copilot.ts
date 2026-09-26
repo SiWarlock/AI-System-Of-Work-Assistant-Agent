@@ -37,6 +37,14 @@ import type {
 import { isAllow, isDeny, processorOfRoute } from "@sow/policy";
 import type { AuditSignal, PolicyDecision } from "@sow/policy";
 import { vetoJobEgress } from "@sow/providers";
+import {
+  COPILOT_HISTORY_MAX_TURNS,
+  NO_HISTORY,
+  historyFromTurns,
+  retrievalQueryOf,
+  type CopilotHistory,
+  type StoredChatTurn,
+} from "./copilotChatHistory";
 
 /** A port result delivered sync (the in-memory fixture / test fake) or async (the real adapter). */
 export type MaybeAsyncResult<T> = Result<T, FailureVariant> | Promise<Result<T, FailureVariant>>;
@@ -157,6 +165,10 @@ export interface CandidateCopilotAnswer {
  * `route` is the veto-CLEARED ProviderRoute (from `decideCopilotEgress`) the synthesizer MUST use —
  * NOT one it re-selects (else the veto becomes advisory: the gate clears route R while synthesis
  * calls R′). The interim stub ignores it (it egresses nowhere); the real adapter binds to it.
+ *
+ * `history` (Linear slice 5b.4b) is the SAME chat's earlier messages — conversation, never a source: it goes into the
+ * user prompt only, is never cited, and never counts toward content trust. Absent ⇒ no memory. Its ONLY production
+ * caller is `runGovernedCopilotSynthesis`, which passes it AFTER the egress veto and requires it explicitly.
  */
 export interface CopilotSynthesisPort {
   readonly synthesize: (
@@ -164,6 +176,7 @@ export interface CopilotSynthesisPort {
     question: string,
     context: RetrievedContext,
     route: ProviderRoute,
+    history?: CopilotHistory,
   ) => MaybeAsyncResult<CandidateCopilotAnswer>;
 }
 
@@ -416,8 +429,9 @@ export function createStubSynthesis(): CopilotSynthesisPort {
 
 // ── A4 — the ask orchestration + the candidate-data / UI-safe gate ──────────────
 //
-// `query.copilotAsk` calls `answerCopilotQuestion` behind the 8.1 auth gate. The orchestration is
-// READ-ONLY (§4.6, §13) — no side effects — and fails CLOSED at every step (unknown workspace,
+// `query.copilotAsk` calls `answerCopilotQuestion` behind the 8.1 auth gate. The orchestration writes NOTHING external
+// and NO Markdown (§4.6, §13); its ONE side effect (Linear slice 5b.4b) is saving an answered turn to the asked
+// workspace's local chat store when the ask names a chat. It fails CLOSED at every step (unknown workspace,
 // scope mismatch, synthesis failure, gate rejection). The redaction/validation boundary lives HERE
 // (the procedure), mirroring the sibling read procedures: the ports hand back candidate data, and
 // `toUiSafeCopilotAnswer` is the ONE place a candidate becomes servable UI-safe data.
@@ -481,12 +495,33 @@ export type AuditPersisting<T extends GovernedCopilotSynthesisDeps> = T & {
 /** The Copilot ASK deps — the governed core + the workspace-knowledge retrieval port. */
 export interface CopilotDeps extends GovernedCopilotSynthesisDeps {
   readonly retrieval: CopilotRetrievalPort;
+  /** Linear slice 5b.4b — the saved chats (absent ⇒ no memory: nothing is read or saved). */
+  readonly chats?: CopilotChatMemory;
+}
+
+/**
+ * Linear slice 5b.4b — the ask's CHAT MEMORY over the saved chats (owner decisions 2026-09-25). ⛔ Keyed by the SAME
+ * request's (workspaceId, chatId) — a chat is never read or extended from another workspace (rule 4). Neither method
+ * throws: an unreadable chat is no history, and a failed save never fails an answer the owner already has.
+ */
+export interface CopilotChatMemory {
+  /** The chat's newest turns in THIS workspace (at most `max`), oldest first — [] for a new or unreadable chat. */
+  readonly recent: (workspaceId: string, chatId: string, max: number) => Promise<readonly StoredChatTurn[]>;
+  /** Save one ANSWERED turn: the owner's question and the answer exactly as it passed the UI-safe gate. */
+  readonly save: (turn: {
+    readonly workspaceId: string;
+    readonly chatId: string;
+    readonly question: string;
+    readonly answer: UiSafeCopilotAnswer;
+  }) => Promise<void>;
 }
 
 /** The validated ask input (narrowed at the procedure boundary). */
 export interface CopilotAskInput {
   readonly workspaceId: string;
   readonly question: string;
+  /** Linear slice 5b.4b — the chat this ask continues (an opaque id the renderer mints). Absent ⇒ no memory. */
+  readonly chatId?: string;
 }
 
 /**
@@ -538,10 +573,11 @@ export function toUiSafeCopilotAnswer(
 }
 
 /**
- * The Copilot ask orchestration (§4.6, read-only): retrieve workspace-scoped context → RE-ENFORCE
- * the WS-8 scope guard (defense-in-depth over ANY adapter) → synthesize a candidate → project +
- * validate → `UiSafeCopilotAnswer`. Any step's typed err short-circuits (fail-closed); NO side
- * effects, and an implied action would become a ProposedAction routed to Approvals — never a write.
+ * The Copilot ask orchestration (§4.6): retrieve workspace-scoped context → RE-ENFORCE the WS-8 scope guard
+ * (defense-in-depth over ANY adapter) → synthesize a candidate → project + validate → `UiSafeCopilotAnswer`. Any
+ * step's typed err short-circuits (fail-closed). No external write and no Markdown write: an implied action would
+ * become a ProposedAction routed to Approvals. The ONE side effect (slice 5b.4b): an answered ask that names a chat
+ * saves the turn to that workspace's local chat store.
  *
  * EGRESS DECISION (safety rule 5, P1.2b): the AUTHORITATIVE Workspace posture is resolved by
  * `input.workspaceId` SERVER-SIDE (never from client input — `CopilotAskInput` carries no posture),
@@ -555,11 +591,24 @@ export async function answerCopilotQuestion(
   deps: CopilotDeps,
   input: CopilotAskInput,
 ): Promise<Result<UiSafeCopilotAnswer, FailureVariant>> {
-  const retrieved = await deps.retrieval.retrieve(input.workspaceId, input.question);
+  // Linear slice 5b.4b — chat memory. ⛔ Read by THIS request's workspaceId (rule 4). The history reaches synthesis
+  // only, after the veto (rule 5); a follow-up searches the owner's PREVIOUS question plus the new one (owner decision).
+  const chatId = input.chatId;
+  const memory = chatId !== undefined ? deps.chats : undefined;
+  const history: CopilotHistory =
+    memory !== undefined && chatId !== undefined
+      ? historyFromTurns(await memory.recent(input.workspaceId, chatId, COPILOT_HISTORY_MAX_TURNS))
+      : NO_HISTORY;
+  const retrieved = await deps.retrieval.retrieve(input.workspaceId, retrievalQueryOf(input.question, history));
   if (!isOk(retrieved)) return retrieved;
   const scoped = enforceRetrievalScope(input.workspaceId, retrieved.value);
   if (!isOk(scoped)) return scoped;
-  return runGovernedCopilotSynthesis(deps, input.workspaceId, input.question, scoped.value);
+  const answered = await runGovernedCopilotSynthesis(deps, input.workspaceId, input.question, scoped.value, history);
+  // Only an answer that passed the UI-safe gate is saved — a denied, failed or rejected ask saves nothing.
+  if (isOk(answered) && memory !== undefined && chatId !== undefined) {
+    await memory.save({ workspaceId: input.workspaceId, chatId, question: input.question, answer: answered.value });
+  }
+  return answered;
 }
 
 /**
@@ -576,6 +625,9 @@ export async function runGovernedCopilotSynthesis(
   workspaceId: string,
   question: string,
   scopedContext: RetrievedContext,
+  // REQUIRED (never defaulted): a caller states its memory — `NO_HISTORY` for briefing and concept — so a new caller
+  // cannot pass history by accident. It reaches ONLY `synthesize`, after the veto below.
+  history: CopilotHistory,
 ): Promise<Result<UiSafeCopilotAnswer, FailureVariant>> {
   const posture = await deps.workspacePosture.resolve(workspaceId);
   if (!isOk(posture)) return posture; // unknown workspace → fail closed (WORKSPACE_NOT_FOUND)
@@ -593,7 +645,7 @@ export async function runGovernedCopilotSynthesis(
     return decision; // veto DENY (e.g. employer-work cloud, ack OFF) → no synthesis
   }
 
-  const candidate = await deps.synthesis.synthesize(workspaceId, question, scopedContext, decision.value.route);
+  const candidate = await deps.synthesis.synthesize(workspaceId, question, scopedContext, decision.value.route, history);
   if (!isOk(candidate)) return candidate;
   // 9.27 — convert the interim decision's OPTIONAL processor (still ProcessorId | undefined; that
   // shape is unchanged) into the REQUIRED, explicit EgressNotice the gate now demands.

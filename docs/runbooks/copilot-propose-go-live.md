@@ -47,7 +47,7 @@ A source is stamped `provenance: "knowledge_writer"` **only** when its content i
   4. **ServingError mapping** — convert `admitForServing`'s hard `ServingError` (workspace_mismatch / revision_mismatch) into an oracle `err`, never swallow it into an `ok` verdict.
   5. **Citation uniqueness** — a `citationId` must be unique within a `RetrievedContext` (retrieval-side dedup), else one admission stamps every duplicate.
 - **Degraded coverage ⇒ untrusted:** dirty parity, a `GbrainPin` mismatch, an oracle failure, or an unresolved signing key (today's live reality — corpora absent) must all collapse to untrusted. Already enforced by the decorator + `admitForServing`'s degraded mode.
-- **Note:** a propose job is already **seed-only** (C5.4a strips the gbrain read tools), so the surface to verify is the seed — no live-read TOCTOU to chase — plus ONE owner-authorized mid-run text: the Linear team NAMES `propose_linear_issue` may return (rule-6 exception 1, 2026-09-25; see ARCHITECTURE.md "Owner-authorized ING-7 exceptions"). Once slice 5b.4 lands, the same workspace's chat history too (exception 2).
+- **Note:** a propose job is already **seed-only** (C5.4a strips the gbrain read tools), so the surface to verify is the seed — no live-read TOCTOU to chase — plus ONE owner-authorized mid-run text: the Linear team NAMES `propose_linear_issue` may return (rule-6 exception 1, 2026-09-25; see ARCHITECTURE.md "Owner-authorized ING-7 exceptions"). Since slice 5b.4b, also the same chat's history in the prompt (exception 2: the owner's questions + the Copilot's earlier gated answers, bounded; never a source).
 
 ### 2. §9.8 approvals inbox — workspace scoping ✅ DONE (`f57a5a5`)
 

@@ -28,6 +28,7 @@ import {
 } from "../../../src/api/procedures/copilotAgentSynthesis";
 import { copilotAgentToolPolicy, buildAuditSignal } from "@sow/policy";
 import { createAuditPersistPort } from "../../../src/boot";
+import { NO_HISTORY } from "../../../src/api/procedures/copilotChatHistory";
 
 const NOW = "2026-08-12T00:00:00.000Z";
 
@@ -114,7 +115,7 @@ function synthesisDeps(over: Partial<GovernedCopilotSynthesisDeps> = {}, audit?:
 describe("24.7 — the egress-veto denial on the interactive Copilot path persists a durable, queryable AuditRecord", () => {
   it("copilot_egress_veto_denial_persists_a_durable_audit_record", async () => {
     const { deps, audit } = synthesisDeps();
-    const r = await runGovernedCopilotSynthesis(deps, WS, "what did we decide?", ctx(WS));
+    const r = await runGovernedCopilotSynthesis(deps, WS, "what did we decide?", ctx(WS), NO_HISTORY);
     expect(isErr(r)).toBe(true);
     if (isErr(r)) expect(r.error.cause?.code).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
     // MOVE THE STATE: query the repository, don't just assert a mock was called.
@@ -129,7 +130,7 @@ describe("24.7 — the egress-veto denial on the interactive Copilot path persis
 
   it("persisted_record_is_redaction_safe — no raw prompt/content text in any field", async () => {
     const { deps, audit } = synthesisDeps();
-    await runGovernedCopilotSynthesis(deps, WS, "a secret question mentioning password=hunter2", ctx(WS));
+    await runGovernedCopilotSynthesis(deps, WS, "a secret question mentioning password=hunter2", ctx(WS), NO_HISTORY);
     const queried = await audit.repo.query({ workspaceId: WS }, 10);
     expect(isOk(queried)).toBe(true);
     if (isOk(queried)) {
@@ -170,7 +171,7 @@ describe("24.7 — the egress-veto denial on the interactive Copilot path persis
     const { deps } = synthesisDeps(
       { auditPersist: createAuditPersistPort({ audit: mem.repo, now: () => FIXED }) },
     );
-    await runGovernedCopilotSynthesis(deps, WS, "q", ctx(WS));
+    await runGovernedCopilotSynthesis(deps, WS, "q", ctx(WS), NO_HISTORY);
     const queried = await mem.repo.query({ workspaceId: WS }, 10);
     if (isOk(queried)) expect(queried.value[0]?.timestamps.occurredAt).toBe(FIXED);
   });
@@ -180,7 +181,7 @@ describe("24.7 — the egress-veto denial on the interactive Copilot path persis
       workspacePosture: createLocalWorkspacePosture({ [WS]: employerPostureAckOff(WS) }),
       routeSelector: createLocalRouteSelector(localRoute), // genuine loopback-local ⇒ ALLOWED, no denial
     });
-    const r = await runGovernedCopilotSynthesis(deps, WS, "q", ctx(WS));
+    const r = await runGovernedCopilotSynthesis(deps, WS, "q", ctx(WS), NO_HISTORY);
     expect(isOk(r)).toBe(true);
     const queried = await audit.repo.query({ workspaceId: WS }, 10);
     expect(isOk(queried)).toBe(true);
@@ -190,7 +191,7 @@ describe("24.7 — the egress-veto denial on the interactive Copilot path persis
   it("a persistence FAULT never changes the caller's denial — the guarantee never depends on the audit write succeeding", async () => {
     const faulted = memAuditQueryable(true);
     const { deps } = synthesisDeps({}, faulted.repo);
-    const r = await runGovernedCopilotSynthesis(deps, WS, "q", ctx(WS));
+    const r = await runGovernedCopilotSynthesis(deps, WS, "q", ctx(WS), NO_HISTORY);
     expect(isErr(r)).toBe(true); // the denial itself is unaffected by the audit-append fault
     if (isErr(r)) expect(r.error.cause?.code).toBe("EMPLOYER_RAW_EGRESS_UNACKNOWLEDGED");
   });
@@ -200,7 +201,7 @@ describe("24.7 — the egress-veto denial on the interactive Copilot path persis
     const mem = memAuditQueryable();
     const probed = synthesisDeps({ auditPersist: createAuditPersistPort({ audit: mem.repo, now: () => NOW }) }, mem.repo);
     for (let i = 0; i < 3; i += 1) {
-      await runGovernedCopilotSynthesis(probed.deps, WS, `probe ${i}`, ctx(WS));
+      await runGovernedCopilotSynthesis(probed.deps, WS, `probe ${i}`, ctx(WS), NO_HISTORY);
     }
     const probedQuery = await mem.repo.query({ workspaceId: WS }, 10);
     const quietQuery = await mem.repo.query({ workspaceId: QUIET_WS }, 10);

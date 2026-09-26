@@ -447,6 +447,27 @@ describe("buildQueryRouter — UI-safe read-model serving (§10/§13)", () => {
     ).rejects.toThrow();
   });
 
+  // Linear slice 5b.4b — a chat id selects the chat whose memory the ask uses (owner 2026-09-25). It is an opaque id:
+  // letters, digits, "-" and "_", at most 64 — anything else is refused at the boundary, before any read.
+  it("copilotAsk passes a well-formed chatId to the chat memory, and refuses a malformed one", async () => {
+    const reads: string[] = [];
+    const copilot: CopilotDeps = {
+      ...fakeCopilot(),
+      chats: { recent: async (_ws, chatId) => (reads.push(chatId), []), save: async () => {} },
+    };
+    const caller = makeCaller(fakePort(), AUTHED_CTX, copilot);
+    const id = "3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b";
+    expect(isOk(await caller.query.copilotAsk({ workspaceId: KNOWN_WORKSPACE, question: "q", chatId: id }))).toBe(true);
+    expect(reads).toEqual([id]);
+    for (const bad of ["", "has space", "x".repeat(65), 7, "a/b", `a${String.fromCharCode(10)}b`]) {
+      await expect(caller.query.copilotAsk({ workspaceId: KNOWN_WORKSPACE, question: "q", chatId: bad as string })).rejects.toThrow();
+    }
+    expect(reads).toEqual([id]);
+    // no chatId ⇒ no memory read at all
+    await caller.query.copilotAsk({ workspaceId: KNOWN_WORKSPACE, question: "q" });
+    expect(reads).toEqual([id]);
+  });
+
   it("query_copilotBriefing_reachable (C6 b-1) — mounted behind authedResolver; KNOWN ws ⇒ cited UI-safe brief", async () => {
     const caller = makeCaller(fakePort());
     const res = await caller.query.copilotBriefing({ workspaceId: KNOWN_WORKSPACE });

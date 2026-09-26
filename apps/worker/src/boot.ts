@@ -313,6 +313,7 @@ import {
 import { readFile } from "node:fs/promises";
 import { createGbrainVersionProbe, computeRevisionId, type GbrainVersionProbe, type KnowledgeRevisionStore, type CommittedRevision, type SecretsPort, type SecretRef, type SecretUnresolved, type StamperDeps, type RunningGbrainVersion, type VaultFs, type GbrainReadAdapter, type ReconcilerDbProjection, type IndexRebuildClient, type EntityGbrainReadPort, type SynthesisReasonPort } from "@sow/knowledge";
 import { gbrainStartupVerify } from "./gbrainStartupVerify";
+import { createCopilotChatMemory } from "./composition/copilotChatMemory";
 
 // ── config ────────────────────────────────────────────────────────────────────
 
@@ -4048,6 +4049,9 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   const copilot = buildCopilotDeps({
     realCopilot: config.copilotRealModel === true,
     auditPersist: copilotAuditPersist,
+    // Linear slice 5b.4b — the SAVED chats the ask reads and saves (owner decisions 2026-09-25). Always bound: a chat
+    // is used only when the renderer names one, and each is keyed by the ask's own (workspaceId, chatId) (rule 4).
+    chats: createCopilotChatMemory(backends.copilotChats, backends.now),
     workspaces: copilotWorkspaces,
     // 9.10-A — the AUTHORITATIVE store-backed veto posture (reads WorkspaceConfigRepository.egressPolicy):
     //   the SOLE production posture source, retiring the flag-derived cloud-consent fallback (rule 5). The

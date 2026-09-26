@@ -22,7 +22,9 @@ import {
   type WorkspacePosture,
   type WorkspacePostureResolver,
   type EgressNotice,
+  type CopilotChatMemory,
 } from "../../../src/api/procedures/copilot";
+import { COPILOT_HISTORY_MAX_TURNS, type StoredChatTurn } from "../../../src/api/procedures/copilotChatHistory";
 
 const WS = "ws-employer";
 const OTHER = "ws-personal";
@@ -651,5 +653,107 @@ describe("toUiSafeCopilotAnswer — the egressProcessor notice is schema-gated (
     const r = toUiSafeCopilotAnswer(candidate, { kind: "processor", value: "anthropic\nleaked raw note" });
     expect(isErr(r)).toBe(true);
     if (isErr(r)) expect(r.error.cause?.code).toBe("COPILOT_ANSWER_REJECTED");
+  });
+});
+
+// Linear slice 5b.4b — CHAT MEMORY in the ask (owner decisions 2026-09-25: "Add chat memory", "Full history", and a
+// follow-up searches the owner's PREVIOUS question plus the new one). ⛔ Rule 4: the chat is read and saved by the
+// SAME request's workspaceId. ⛔ Rule 5: the history reaches only synthesis, AFTER the egress veto — a denied ask sends
+// nothing and saves nothing. Only an answer that passed the UI-safe gate is saved.
+describe("answerCopilotQuestion — chat memory (Linear slice 5b.4b)", () => {
+  const stored = (q: string, a: string): StoredChatTurn => ({ question: q, answer: JSON.stringify({ answer: [a], citations: [] }) });
+  function memory(turns: Record<string, readonly StoredChatTurn[]> = {}) {
+    const reads: [string, string, number][] = [];
+    const saves: Parameters<CopilotChatMemory["save"]>[0][] = [];
+    const mem: CopilotChatMemory = {
+      recent: async (ws, chatId, max) => (reads.push([ws, chatId, max]), turns[`${ws}/${chatId}`] ?? []),
+      save: async (t) => void saves.push(t),
+    };
+    return { mem, reads, saves };
+  }
+  function recordingSynth(): { synth: CopilotSynthesisPort; seen: () => unknown[] } {
+    let args: unknown[] = [];
+    return {
+      synth: { synthesize: (...a: unknown[]) => ((args = a), ok({ answer: ["Filed?"], citations: [] })) } as CopilotSynthesisPort,
+      seen: () => args,
+    };
+  }
+  function recordingRetrieval(c: RetrievedContext): { retrieval: CopilotDeps["retrieval"]; queries: string[] } {
+    const queries: string[] = [];
+    return { retrieval: { retrieve: async (_ws, q) => (queries.push(q), ok(c)) }, queries };
+  }
+  const base = (over: Partial<CopilotDeps> = {}): CopilotDeps => ({
+    retrieval: createFixtureRetrieval({ [WS]: ctx(WS) }),
+    synthesis: createStubSynthesis(),
+    workspacePosture: createLocalWorkspacePosture({ [WS]: localWorkspacePosture(WS) }),
+    routeSelector: createLocalRouteSelector(),
+    ...over,
+  });
+
+  it("no chatId: no memory is read or saved, and retrieval searches the question alone", async () => {
+    const m = memory();
+    const r0 = recordingRetrieval(ctx(WS));
+    const r = await answerCopilotQuestion(base({ chats: m.mem, retrieval: r0.retrieval }), { workspaceId: WS, question: "what?" });
+    expect(isOk(r)).toBe(true);
+    expect([m.reads, m.saves]).toEqual([[], []]);
+    expect(r0.queries).toEqual(["what?"]);
+  });
+
+  it("with a chatId: the chat's turns become history, the follow-up searches the PREVIOUS question too, and the answer is saved", async () => {
+    const m = memory({ [`${WS}/chat-1`]: [stored("What is the login bug?", "It loops.")] });
+    const s = recordingSynth();
+    const r0 = recordingRetrieval(ctx(WS));
+    const r = await answerCopilotQuestion(base({ chats: m.mem, synthesis: s.synth, retrieval: r0.retrieval }), {
+      workspaceId: WS,
+      question: "Core",
+      chatId: "chat-1",
+    });
+    expect(isOk(r)).toBe(true);
+    expect(m.reads).toEqual([[WS, "chat-1", COPILOT_HISTORY_MAX_TURNS]]);
+    expect(r0.queries).toEqual([`What is the login bug?${String.fromCharCode(10)}Core`]);
+    expect(s.seen()[1]).toBe("Core"); // the QUESTION stays the new one
+    expect(s.seen()[4]).toEqual([
+      { role: "owner", text: "What is the login bug?" },
+      { role: "copilot", text: "It loops." },
+    ]);
+    expect(m.saves).toEqual([{ workspaceId: WS, chatId: "chat-1", question: "Core", answer: isOk(r) ? r.value : undefined }]);
+  });
+
+  it("⛔ rule 4: the chat is read under the REQUEST's workspace — another workspace's chat with the same id is never used", async () => {
+    const m = memory({ [`${OTHER}/chat-1`]: [stored("OTHER_WS_QUESTION", "OTHER_WS_ANSWER")] });
+    const s = recordingSynth();
+    await answerCopilotQuestion(base({ chats: m.mem, synthesis: s.synth }), { workspaceId: WS, question: "q", chatId: "chat-1" });
+    expect(m.reads.map((x) => x[0])).toEqual([WS]);
+    expect(JSON.stringify(s.seen())).not.toContain("OTHER_WS_");
+  });
+
+  it("⛔ rule 5: a veto DENY runs no synthesis and saves nothing", async () => {
+    const m = memory({ [`${WS}/chat-1`]: [stored("prev", "prev answer")] });
+    const neverSynth: CopilotSynthesisPort = {
+      synthesize: () => {
+        throw new Error("synthesis must not run after an egress DENY");
+      },
+    };
+    const r = await answerCopilotQuestion(
+      base({
+        chats: m.mem,
+        synthesis: neverSynth,
+        workspacePosture: createLocalWorkspacePosture({ [WS]: posture(employerWs, egressPolicy({ employerRawEgressAcknowledged: false })) }),
+        routeSelector: createLocalRouteSelector(cloudRoute),
+      }),
+      { workspaceId: WS, question: "q", chatId: "chat-1" },
+    );
+    expect(isErr(r)).toBe(true);
+    expect(m.saves).toEqual([]);
+  });
+
+  it("a failed synthesis or a gate rejection saves nothing", async () => {
+    const m = memory();
+    const failing: CopilotSynthesisPort = { synthesize: () => err(failure("provider_failed", "x")) };
+    await answerCopilotQuestion(base({ chats: m.mem, synthesis: failing }), { workspaceId: WS, question: "q", chatId: "c" });
+    const leaky: CopilotSynthesisPort = { synthesize: () => ok({ answer: [], citations: [] }) }; // an empty answer fails the gate
+    const r = await answerCopilotQuestion(base({ chats: m.mem, synthesis: leaky }), { workspaceId: WS, question: "q", chatId: "c" });
+    expect(isErr(r)).toBe(true);
+    expect(m.saves).toEqual([]);
   });
 });

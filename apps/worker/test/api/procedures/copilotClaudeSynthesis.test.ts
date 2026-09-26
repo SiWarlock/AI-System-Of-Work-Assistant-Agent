@@ -54,6 +54,7 @@ import {
 import { workspaceId } from "@sow/contracts";
 import type { GbrainQueryExec } from "../../../src/api/procedures/copilotGbrainSubprocess";
 import type { LegacyContentPolicy } from "@sow/policy";
+import { NO_HISTORY } from "../../../src/api/procedures/copilotChatHistory";
 
 /** Read `provider` off a ProviderRoute union without a cast (only the provider arm carries it). */
 function providerOf(route: ProviderRoute): string | undefined {
@@ -203,6 +204,48 @@ describe("buildCopilotUserPrompt — question + citationId-tagged passages", () 
     expect(prompt).toContain("cited excerpt");
     // A block with no citationId can't be cited, so it never reaches the model.
     expect(prompt).not.toContain("UNCITABLE_ORPHAN_BLOCK");
+  });
+});
+
+// Linear slice 5b.4b — chat memory (owner 2026-09-25, rule-6 exception 2). The history is a USER-prompt section BEFORE
+// "Question:"; empty history leaves the prompt byte-identical; the system prompt never changes; history is never a
+// source, so a citation that appears only in it is dropped.
+describe("buildCopilotUserPrompt / the completion adapter — chat memory (Linear slice 5b.4b)", () => {
+  const tiny: RetrievedContext = { workspaceId: "ws-employer", blocks: ["b1"], sources: [{ citationId: "src:note-1", title: "T1" }] };
+  const history = [
+    { role: "owner" as const, text: "What is the login bug?" },
+    { role: "copilot" as const, text: "It loops. Shall I file it?" },
+  ];
+
+  it("⛔ empty history: the prompt is BYTE-IDENTICAL to today's", () => {
+    const today = ["Question:", "q", "", "Context passages:", "", "[src:note-1] T1", "b1"].join(String.fromCharCode(10));
+    expect(buildCopilotUserPrompt("q", tiny)).toBe(today);
+    expect(buildCopilotUserPrompt("q", tiny, NO_HISTORY)).toBe(today);
+  });
+
+  it("the history section comes BEFORE 'Question:', and nothing of it after the passages", () => {
+    const prompt = buildCopilotUserPrompt("Core", tiny, history);
+    const q = prompt.indexOf("Question:");
+    const owner = prompt.indexOf('Owner: "What is the login bug?"');
+    expect(owner).toBeGreaterThanOrEqual(0);
+    expect(owner).toBeLessThan(q);
+    expect(prompt.indexOf("It loops.")).toBeLessThan(q);
+    expect(prompt.slice(prompt.indexOf("Context passages:"))).not.toContain("It loops.");
+  });
+
+  it("the adapter sends the history in the USER prompt; the system prompt is unchanged", async () => {
+    const { client, calls } = recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 }));
+    await createClaudeCopilotSynthesis(client).synthesize("ws-employer", "Core", ctx, cloudRoute, history);
+    expect(calls[0]?.userPrompt).toContain('Copilot: "It loops. Shall I file it?"');
+    expect(calls[0]?.systemPrompt).toBe(COPILOT_SYSTEM_PROMPT);
+  });
+
+  it("⛔ history is never a source: a citation that appears only in the history is dropped", async () => {
+    const withCite = [{ role: "copilot" as const, text: "See [src:from-history] for details" }];
+    const out = { answer: ["ok"], citations: [{ citationId: "src:from-history", title: "Forged" }, { citationId: "src:note-1", title: "x" }] };
+    const { client } = recordingClient(ok({ structuredOutput: out, costUsd: 0.01 }));
+    const r = await createClaudeCopilotSynthesis(client).synthesize("ws-employer", "q", ctx, cloudRoute, withCite);
+    expect(isOk(r) && r.value.citations.map((c) => c.citationId)).toEqual(["src:note-1"]);
   });
 });
 

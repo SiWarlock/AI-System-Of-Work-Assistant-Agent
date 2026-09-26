@@ -1199,8 +1199,9 @@ describe("createClaudeAgentCopilotRunner — the C5.3 propose grant (defense-in-
     expect(opts["allowedTools"]).toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
     expect(opts["allowedTools"]).not.toContain("mcp__gbrain__query");
     // Tier-1 §13.10: the analysis tools are stripped too (C5.4a build-time-trust TOCTOU closure holds as the
-    // read surface grows — a propose job reads no store beyond the pre-verified seed; the only other mid-run text is
-    // the owner-authorized Linear team NAMES of propose_linear_issue, rule-6 exception 1, 2026-09-25).
+    // read surface grows — a propose job reads no store beyond the pre-verified seed; the only other text it sees is
+    // the owner-authorized Linear team NAMES of propose_linear_issue and the same chat's history in the prompt,
+    // rule-6 exceptions 1 and 2, 2026-09-25).
     expect(opts["allowedTools"]).not.toContain("mcp__gbrain__find_contradictions");
     expect(opts["allowedTools"]).not.toContain("mcp__gbrain__find_anomalies");
     expect(opts["allowedTools"]).not.toContain("mcp__gbrain__find_orphans");
@@ -1544,5 +1545,73 @@ describe("createClaudeAgentCopilotRunner — propose_linear_issue (Linear slice 
     expect(sp).toMatch(/only when the owner explicitly asked/i);
     expect(sp).toMatch(/priority and dueDate ONLY if the owner stated/i);
     expect(sp).toMatch(/never guess/i);
+  });
+});
+
+// Linear slice 5b.4b — chat memory on the AGENT path (owner 2026-09-25: "Full history", rule-6 exception 2, which
+// covers card-filing AND note-propose jobs). History rides the prompt context into the user prompt only; the system
+// prompt, the trust verdict and the tool grant never depend on it.
+describe("chat memory on the agent path (Linear slice 5b.4b)", () => {
+  const history = [
+    { role: "owner" as const, text: "What is the login bug?" },
+    { role: "copilot" as const, text: "It loops. Shall I file it in Core?" },
+  ];
+
+  it("buildCopilotAgentPrompt puts the history before 'Question:'; the system prompt is unchanged", () => {
+    const { prompt, systemPrompt } = buildCopilotAgentPrompt("yes", ctx(), { history });
+    expect(prompt.indexOf('Owner: "What is the login bug?"')).toBeGreaterThanOrEqual(0);
+    expect(prompt.indexOf("Copilot: ")).toBeLessThan(prompt.indexOf("Question:"));
+    expect(systemPrompt).toBe(COPILOT_AGENT_SYSTEM_PROMPT);
+    expect(buildCopilotAgentPrompt("q", ctx()).prompt).toBe(buildCopilotAgentPrompt("q", ctx(), { history: [] }).prompt);
+  });
+
+  it("the adapter hands the history to the runner with the question and context", async () => {
+    const f = fakeRunner(() => ok(completed({ answer: ["ok"], citations: [] })));
+    await createAgentRuntimeCopilotSynthesis(f.runner).synthesize("personal-business", "yes", ctx(), CLAUDE_ROUTE, history);
+    expect(f.lastPrompt()).toEqual({ question: "yes", context: ctx(), history });
+  });
+
+  it("⛔ history never counts toward trust: the verdict reads the context alone", async () => {
+    const seen: unknown[][] = [];
+    const f = fakeRunner(() => ok(completed({ answer: ["ok"], citations: [] })));
+    const synth = createAgentRuntimeCopilotSynthesis(f.runner, {
+      proposeEnabled: true,
+      auditPersist: auditNoop,
+      resolveContentTrust: (...args: unknown[]) => (seen.push(args), deriveCopilotContentTrust(args[0] as RetrievedContext)),
+    });
+    await synth.synthesize("personal-business", "yes", ctx({ blocks: [], sources: [] }), CLAUDE_ROUTE, history);
+    expect(seen).toEqual([[ctx({ blocks: [], sources: [] })]]);
+    expect(f.lastJob()?.trustLevel).toBe("untrusted"); // no sources + history ⇒ still untrusted
+  });
+
+  it("⛔ the owner's exception: a read-only, a card-filing AND a note-propose job all get the history in the prompt", async () => {
+    const readOnly = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE);
+    const filing = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE, { contentTrust: "trusted", proposeEnabled: true });
+    const notes = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE, { contentTrust: "trusted", proposeEnabled: false, knowledgeProposeEnabled: true });
+    const deps = {
+      proposeSink: { record: async () => ok({ approvalRef: "a", created: true }) },
+      buildProposeMcpServer: (() => ({ type: "sdk", name: "copilot", instance: {} })) as never,
+      knowledgeProposeSink: { record: async () => ok({ approvalRef: "a", planRef: "p", created: true }) } as never,
+      buildKnowledgeProposeMcpServer: (() => ({ type: "sdk", name: "copilot", instance: {} })) as never,
+      knowledgeNoteExists: (async () => false) as never,
+      knowledgeSourceRef: { sourceId: "src-1" } as never,
+    };
+    for (const [name, job, tool] of [
+      ["read-only", readOnly, undefined],
+      ["filing", filing, COPILOT_PROPOSE_MCP_TOOL_NAME],
+      ["notes", notes, COPILOT_PROPOSE_KNOWLEDGE_MCP_TOOL_NAME],
+    ] as const) {
+      const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+      const runner = createClaudeAgentCopilotRunner({
+        servedWorkspaceId: "personal-business",
+        gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+        getToken: async () => ok("tok"),
+        queryFn: cap.fn,
+        ...deps,
+      });
+      expect(isOk(await runner.run(job, { question: "yes", context: ctx(), history })), name).toBe(true);
+      expect(cap.seen()?.prompt, name).toContain('Copilot: "It loops. Shall I file it in Core?"');
+      if (tool !== undefined) expect((cap.seen()?.options ?? {})["allowedTools"], name).toContain(tool);
+    }
   });
 });
