@@ -212,10 +212,12 @@ describe("createApprovalsProposeSink — record a pending Approval (direct repos
   });
 
   it("(a) two DIFFERENT workspaces derive DIFFERENT approval ids for the same envelope (no cross-workspace bleed)", async () => {
-    // Each workspace gets its OWN outbox here. With ONE shared outbox the second workspace is now REFUSED
-    // (review 2026-09-22, pinned by the rule-4 test below): the Copilot keys are not workspace-scoped yet, so
-    // it would get a card with nothing of its own to send. Workspace-scoped proposal keys land with the
-    // Copilot proposer rework (Linear slice 5b); then this test can share one outbox again.
+    // Each workspace gets its OWN outbox here. This test hands the SAME pre-derived envelope to both workspaces,
+    // so with ONE shared outbox the second is REFUSED (pinned by the rule-4 test below) — the sink's defense in
+    // depth. Since Linear slice 5b.1 the workspace is folded into the keys at DERIVE time (proposeCopilotAction),
+    // so real proposals in two workspaces no longer share keys; a test of that goes through proposeCopilotAction
+    // (copilotPropose.test.ts), not through this sink-level fixture. Corrected 2026-09-25: this comment used to say
+    // the test could share one outbox once the keys were workspace-scoped, which a sink-level fixture never shows.
     const a = fakeApprovals();
     const sink = makeSink(a.repo);
     await sink.record({ action: fx.action, envelope: fx.envelope, workspaceId: WS });

@@ -31,6 +31,8 @@ import {
   UiSafeLinearProposalResultSchema,
   splitToSummaryLines,
   collapseToSummaryLine,
+  LINEAR_DESCRIPTION_MAX,
+  MAX_DETAIL_DESCRIPTION_LINES,
   UI_SAFE_ALLOWLIST,
 } from "../../src/api/ui-safe";
 
@@ -812,7 +814,9 @@ describe("UiSafeApprovalDetail / UiSafeSendNowResult — Linear slice 3+4", () =
 
   it("rejects a multi-line title, more than 40 description lines, and an unknown send state", () => {
     expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, title: "two\nlines" }).success).toBe(false);
-    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, descriptionLines: Array.from({ length: 41 }, (_, i) => `l${i}`) }).success).toBe(false);
+    expect(
+      UiSafeApprovalDetailSchema.safeParse({ ...ok, descriptionLines: Array.from({ length: MAX_DETAIL_DESCRIPTION_LINES + 1 }, (_, i) => `l${i}`) }).success,
+    ).toBe(false);
     expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, sendState: "delivered" }).success).toBe(false);
   });
 
@@ -893,5 +897,30 @@ describe("UiSafeLinearTeam / UiSafeLinearTeamList / UiSafeLinearProposalResult �
     expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, teamName: "two\nlines" }).success).toBe(false);
     expect(UI_SAFE_ALLOWLIST.approvalDetail as readonly string[]).not.toContain("teamId");
     expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, teamId: "t" }).success).toBe(false);
+  });
+});
+
+// Linear slice 5b.1 (owner decision 2026-09-25): "make the card able to show all the description past 40 lines" —
+// the owner must SEE everything a Linear write sends. The limit is ~20,000 characters (form and Copilot alike).
+describe("the WHOLE description is shown (Linear slice 5b.1)", () => {
+  it("the Linear description limit is 20,000 characters, and Details can hold every line of the worst case", () => {
+    expect(LINEAR_DESCRIPTION_MAX).toBe(20000);
+    // Worst case for the line count: one character per line → 10,000 lines.
+    const worst = Array.from({ length: LINEAR_DESCRIPTION_MAX / 2 }, () => "x").join("\n");
+    expect(worst.length).toBeLessThanOrEqual(LINEAR_DESCRIPTION_MAX);
+    const out = splitToSummaryLines(worst, MAX_DETAIL_DESCRIPTION_LINES);
+    expect(out.truncated).toBe(false);
+    expect(out.lines).toHaveLength(LINEAR_DESCRIPTION_MAX / 2);
+    expect(UiSafeApprovalDetailSchema.safeParse({ approvalId: "x", sendState: "ready", descriptionLines: out.lines }).success).toBe(true);
+  });
+
+  it("⛔ a line longer than one summary line is WRAPPED, never cut — no character is lost", () => {
+    const long = "word ".repeat(1000).trim(); // 4,999 characters on ONE line
+    const out = splitToSummaryLines(long, MAX_DETAIL_DESCRIPTION_LINES);
+    expect(out.truncated).toBe(false);
+    expect(out.lines.length).toBeGreaterThan(1);
+    expect(out.lines.every((l) => l.length > 0 && l.length <= 1024)).toBe(true);
+    expect(out.lines.join("")).toBe(long);
+    expect(UiSafeApprovalDetailSchema.safeParse({ approvalId: "x", sendState: "ready", descriptionLines: out.lines }).success).toBe(true);
   });
 });

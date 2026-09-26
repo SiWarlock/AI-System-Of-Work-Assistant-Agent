@@ -70,7 +70,7 @@ describe("the New Linear issue form — where it appears", () => {
     for (const label of ["Team", "Title", "Description", "Priority"]) expect(within(form).getByLabelText(label)).toBeTruthy();
     for (const absent of [/assignee/i, /owner/i, /due/i, /date/i]) expect(within(form).queryByLabelText(absent)).toBeNull();
     expect(within(form).getByLabelText("Title").getAttribute("maxlength")).toBe("255");
-    expect(within(form).getByLabelText("Description").getAttribute("maxlength")).toBe("8000");
+    expect(within(form).getByLabelText("Description").getAttribute("maxlength")).toBe("20000"); // slice 5b.1 (owner)
   });
 });
 

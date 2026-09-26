@@ -190,11 +190,20 @@ describe("propose — one Linear issue from the form, as a PENDING card that sti
     }
   });
 
-  it("a payload over the propose bound (16 KiB of JSON) is 'invalid_input' and never reaches the sink", async () => {
+  it("a payload over the propose bound is 'invalid_input' and never reaches the sink", async () => {
     const s = sink();
-    // Each quote escapes to two characters, so 9 000 of them is over 16 384 once serialized.
-    expect(await port({ sink: s }).p.propose({ ...FORM, description: '"'.repeat(9000) })).toEqual(ok({ outcome: "invalid_input" }));
+    // Each quote escapes to two characters once serialized: 40 000 of them is over the 64 KiB bound.
+    expect(await port({ sink: s }).p.propose({ ...FORM, description: '"'.repeat(40000) })).toEqual(ok({ outcome: "invalid_input" }));
     expect(s.calls).toHaveLength(0);
+  });
+
+  it("⛔ the LONGEST description the form allows is never refused by the propose bound, even at worst-case escaping", async () => {
+    // Linear slice 5b.1: the payload bound must fit the 20,000-character limit when every character escapes to two.
+    const s = sink();
+    expect(await port({ sink: s }).p.propose({ ...FORM, description: '"'.repeat(20000) })).toEqual(
+      ok(expect.objectContaining({ outcome: "created" })),
+    );
+    expect(s.calls).toHaveLength(1);
   });
 
   it("⛔ a re-submitted draft whose card cannot be read back is 'unavailable' — never a guessed 'already_pending'", async () => {

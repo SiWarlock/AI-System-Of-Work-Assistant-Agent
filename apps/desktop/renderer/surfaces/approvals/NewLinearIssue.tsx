@@ -9,12 +9,13 @@
 // conflict), so a retry after a failure is the SAME proposal and can never become a second issue.
 // ⚠ WS-8: the parent re-keys this component by the active workspace, so a scope switch drops its teams and draft.
 import { useEffect, useRef, useState, type FormEvent, type ReactElement } from "react";
-import type { UiSafeLinearTeamList } from "@sow/contracts/api/ui-safe";
+import { LINEAR_DESCRIPTION_MAX, type UiSafeLinearTeamList } from "@sow/contracts/api/ui-safe";
 import type { LinearIssueDraft, LinearTeamsResult, ProposeLinearIssueResult } from "../../lib/linear-issue";
 
-/** The same bounds the worker enforces (apps/worker/src/api/procedures/linearIssue.ts). */
+/** The same bounds the worker enforces (apps/worker/src/api/procedures/linearIssue.ts); the description's is shared
+ *  through the contract so the two cannot drift (slice 5b.1, owner: ~250 lines). */
 export const MAX_TITLE = 255;
-export const MAX_DESCRIPTION = 8000;
+export const MAX_DESCRIPTION = LINEAR_DESCRIPTION_MAX;
 
 const FORM_ID = "sow-new-linear-issue";
 const PRIORITIES: readonly (readonly [number, string])[] = [

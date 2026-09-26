@@ -85,6 +85,11 @@ const uiSafeToken = z
  * to the 1024 cap. (min-length is the caller's responsibility — the suffix is always non-empty.)
  */
 export function collapseToSummaryLine(s: string): string {
+  return collapseWhitespace(s).slice(0, 1024);
+}
+
+/** {@link collapseToSummaryLine} without the 1024 cut — for a caller that WRAPS instead ({@link splitToSummaryLines}). */
+function collapseWhitespace(s: string): string {
   // The exact newline family `uiSafeSummaryLine` rejects: CR, LF, VT, FF, NEL, LS, PS.
   // (charCode-based, not a regex — a plain `\s` class misses NEL / U+0085.)
   const newline = new Set([0x0d, 0x0a, 0x0b, 0x0c, 0x85, 0x2028, 0x2029]);
@@ -100,22 +105,51 @@ export function collapseToSummaryLine(s: string): string {
       prevSpace = false;
     }
   }
-  return out.trim().slice(0, 1024);
+  return out.trim();
+}
+
+/**
+ * Linear slice 5b.1 (owner decision 2026-09-25): the longest Linear description the form and the Copilot may send —
+ * "theres hardly a ticket that will be created shorter than 40 lines". ~250 lines of prose.
+ */
+export const LINEAR_DESCRIPTION_MAX = 20_000;
+
+/**
+ * The most description lines an approval's Details carry: enough for EVERY line of a {@link LINEAR_DESCRIPTION_MAX}
+ * description in the worst case (one character per line), so the owner always sees the whole of what is sent.
+ */
+export const MAX_DETAIL_DESCRIPTION_LINES = LINEAR_DESCRIPTION_MAX / 2;
+
+/** Cut one collapsed line into pieces of at most 1024 UTF-16 units, never inside a character. Nothing is dropped. */
+function wrapLine(line: string): string[] {
+  const out: string[] = [];
+  let current = "";
+  for (const ch of line) {
+    if (current.length + ch.length > 1024) {
+      out.push(current);
+      current = "";
+    }
+    current += ch;
+  }
+  if (current.length > 0) out.push(current);
+  return out;
 }
 
 /**
  * Split free text into SINGLE lines the summary-line gate accepts (Linear slice 3+4: an approval's description,
  * shown in its details). Splits on the SAME newline family the gate rejects (CR, LF, VT, FF, NEL, LS, PS — a
- * plain `\n` split misses NEL/LS/PS), collapses whitespace inside each line via {@link collapseToSummaryLine},
- * drops blank lines, and caps the count at `max`, saying so via `truncated`.
+ * plain `\n` split misses NEL/LS/PS), collapses whitespace inside each line, WRAPS a line longer than 1024 into
+ * several (it used to CUT it silently — slice 5b.1), drops blank lines, and caps the count at `max` (default: enough
+ * for any {@link LINEAR_DESCRIPTION_MAX} description), saying so via `truncated`.
  */
-export function splitToSummaryLines(s: string, max = 40): { lines: string[]; truncated: boolean } {
+export function splitToSummaryLines(s: string, max = MAX_DETAIL_DESCRIPTION_LINES): { lines: string[]; truncated: boolean } {
   const newline = new Set([0x0d, 0x0a, 0x0b, 0x0c, 0x85, 0x2028, 0x2029]);
   const lines: string[] = [];
   let current = "";
   const flush = (): void => {
-    const line = collapseToSummaryLine(current);
-    if (line.length > 0) lines.push(line);
+    // A line longer than one summary line is WRAPPED, not cut (slice 5b.1): the owner must see all that is sent.
+    const line = collapseWhitespace(current);
+    if (line.length > 0) lines.push(...wrapLine(line));
     current = "";
   };
   for (const ch of s) {
@@ -722,9 +756,10 @@ export type ApprovalSendRefusal = z.infer<typeof approvalSendRefusalSchema>;
 /**
  * An external_action approval's details, loaded ON OPEN (owner decision 2026-09-22). ⛔ The worker serves this
  * ONLY when the requested workspace equals the approval's own (WS-8): `title` and `descriptionLines` are the
- * action's own content, shown to the owner on purpose, so this contract bounds their SHAPE (single lines, ≤ 40
- * lines, no extra keys) — the workspace check is what keeps employer content out of a personal scope. Never
- * carries the payload, a key, a hash, an owner or a date.
+ * action's own content, shown to the owner on purpose, so this contract bounds their SHAPE (single lines, enough of
+ * them for a whole {@link LINEAR_DESCRIPTION_MAX} description — slice 5b.1, the owner must see all that is sent —
+ * no extra keys) — the workspace check is what keeps employer content out of a personal scope. Never carries the
+ * payload, a key, a hash, an owner or a date.
  */
 export interface UiSafeApprovalDetail {
   approvalId: string;
@@ -752,7 +787,7 @@ export const UiSafeApprovalDetailSchema = z
     refusal: approvalSendRefusalSchema.optional(),
     targetSystem: targetSystemSchema.optional(),
     title: uiSafeSummaryLine.optional(),
-    descriptionLines: z.array(uiSafeSummaryLine).max(40).readonly().optional(),
+    descriptionLines: z.array(uiSafeSummaryLine).max(MAX_DETAIL_DESCRIPTION_LINES).readonly().optional(),
     descriptionTruncated: z.boolean().optional(),
     priority: z.number().int().min(0).max(4).optional(),
     teamName: uiSafeSummaryLine.optional(),

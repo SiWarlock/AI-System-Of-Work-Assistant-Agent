@@ -271,7 +271,8 @@ async function start(config: WorkerHostConfig): Promise<void> {
       //       structural field-fidelity is CLOSED (`allowItemFields`), so cross-workspace SURFACING is scoped
       //       out per ask. Accepted residuals of ONE shared brain: A1 (a page whose BODY verbatim quotes another
       //       workspace surfaces that text under its own workspace's ask) — and because employer-work egresses to
-      //       the Claude cloud WITH a notice (cloudCopilotPosture), A1 employer text embedded in a PERSONAL page
+      //       the Claude cloud WITH a notice (its STORED egress posture, default-seeded at provisioning — the
+      //       interim `cloudCopilotPosture` named here until 2026-09-25 was deleted), A1 employer text embedded in a PERSONAL page
       //       egresses under a PERSONAL ask WITHOUT the employer notice. Option B (per-workspace brains) removes
       //       both, deferred per owner. See docs/planning/ws8-workspace-scoping.md.
       // To turn OFF (back to single-served, only personal-business reads the brain), remove these two lines.

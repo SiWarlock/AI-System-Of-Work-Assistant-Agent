@@ -239,3 +239,16 @@ export function selectServingOracleFactory(
   if (sel.goLiveArmed === true && sel.loaderBacked !== undefined) return sel.loaderBacked;
   return createInterimDegradedServingOracle;
 }
+
+/**
+ * Propose precondition (1), "content trust is REAL": the SELECTED factory IS the loader-backed one — which
+ * {@link selectServingOracleFactory} returns only when go-live is armed. ⛔ Merely HAVING a factory is not enough:
+ * with stamping on and go-live off the selection is the interim always-degraded oracle, and boot used to read that as
+ * "real" (Linear slice 5b.1, owner decision 2026-09-25 — fix the check). Pure.
+ */
+export function isGoLiveOracleSelected(
+  selected: (() => CopilotServingOracle) | undefined,
+  loaderBacked: (() => CopilotServingOracle) | undefined,
+): boolean {
+  return selected !== undefined && loaderBacked !== undefined && selected === loaderBacked;
+}

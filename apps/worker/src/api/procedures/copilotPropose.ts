@@ -31,8 +31,12 @@ import { buildEnvelopeFromAction } from "@sow/integrations";
 /** A Copilot proposal ALWAYS requires a human approval — the Copilot never auto-applies an external write. */
 export const COPILOT_PROPOSE_APPROVAL_POLICY = "requires_approval";
 
-/** A generous bound on the model-authored payload — an unbounded payload is a storage/render DoS surface. */
-export const MAX_PROPOSE_PAYLOAD_CHARS = 16 * 1024;
+/**
+ * A generous bound on the proposal payload — an unbounded payload is a storage/render DoS surface. Measured as the
+ * serialized length, so it must hold a Linear description at its limit (`LINEAR_DESCRIPTION_MAX`, 20,000) whose every character escapes to two
+ * (Linear slice 5b.1 raised it from 16 KiB, which a long form description could exceed).
+ */
+export const MAX_PROPOSE_PAYLOAD_CHARS = 64 * 1024;
 
 /**
  * The model's propose INTENT — the ONLY thing the model supplies. UNTRUSTED (model output), so it is shape-
@@ -113,12 +117,32 @@ function hasUsableIdentity(identity: Record<string, string>): boolean {
  *       proposal to §9.8 Approvals UNCONDITIONALLY — never branch auto/human on `approvalPolicy`.
  *   (2) UPDATE OVER-DEDUPE. The idempotencyKey excludes `payload` (identity+operation only) — the system's
  *       replay-dedupe model. So two DIFFERENT-content updates to the SAME object+operation derive the SAME
- *       key and the second SILENTLY dedupes (RecordPendingPort idempotent). For a genuine update, the intent
- *       MUST carry a content/revision-distinguishing token in `identity` (or the caller must supersede, not
- *       drop) — else a wanted second write is lost. Correct for CREATE; a footgun for UPDATE.
+ *       key, and the wired approvals sink REFUSES the second (COPILOT_PROPOSE_PAYLOAD_CONFLICT) — pinned by
+ *       copilot-propose-governance.test.ts. (Corrected 2026-09-25: this said the second "SILENTLY dedupes",
+ *       which describes `RecordPendingPort`, not the sink every Copilot proposal goes through.) For a genuine
+ *       update, the intent MUST carry a content/revision-distinguishing token in `identity` — else the wanted
+ *       second write is refused. Correct for CREATE; a footgun for UPDATE.
  */
-export function deriveCopilotProposedAction(intent: unknown): Result<ProposedAction, FailureVariant> {
-  const i = parseCopilotProposeIntent(intent);
+export function deriveCopilotProposedAction(
+  intent: unknown,
+  opts: { readonly workspaceId?: string } = {},
+): Result<ProposedAction, FailureVariant> {
+  const parsed0 = parseCopilotProposeIntent(intent);
+  // Linear slice 5b.1 (owner, rule 4): fold the SERVER-BOUND workspace into the identity, so one proposal in two
+  // workspaces derives two independent key pairs. Any model key that normalizes to "workspace" is DROPPED first —
+  // normalization lowercases and trims names but does not dedupe them, so a smuggled " Workspace " would otherwise
+  // ride alongside. Keys are sorted before hashing, so a caller whose identity already carries this same workspace
+  // (the Linear form) derives byte-identical keys.
+  const i =
+    parsed0 === null || opts.workspaceId === undefined
+      ? parsed0
+      : {
+          ...parsed0,
+          identity: {
+            ...Object.fromEntries(Object.entries(parsed0.identity).filter(([k]) => k.trim().toLowerCase() !== "workspace")),
+            workspace: opts.workspaceId,
+          },
+        };
   if (i === null) {
     return err(
       failure("validation_rejected", "copilot propose: malformed intent", {
@@ -277,7 +301,8 @@ export async function proposeCopilotAction(params: {
   readonly workspaceId: WorkspaceId;
   readonly sink: CopilotProposeSink;
 }): Promise<Result<CopilotProposeReceipt, FailureVariant>> {
-  const derived = deriveCopilotProposedAction(params.intent);
+  // The workspace folded into the keys is the SERVER-BOUND one (slice 5b.1) — never anything the model wrote.
+  const derived = deriveCopilotProposedAction(params.intent, { workspaceId: String(params.workspaceId) });
   if (!isOk(derived)) return derived;
   return routeCopilotProposal({ action: derived.value, workspaceId: params.workspaceId, sink: params.sink });
 }

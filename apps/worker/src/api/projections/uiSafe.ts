@@ -44,6 +44,7 @@ import {
   UiSafeScheduleEntrySchema,
   UiSafeLinearTeamSchema,
   MAX_LINEAR_TEAMS,
+  MAX_DETAIL_DESCRIPTION_LINES,
 } from "@sow/contracts";
 import { permitsRawDrillDown } from "@sow/policy";
 
@@ -343,7 +344,7 @@ export function toUiSafeApprovalDetail(src: ApprovalDetailSource): UiSafeApprova
     if (title.length > 0) out.title = title;
   }
   if (typeof src.description === "string") {
-    const { lines, truncated } = splitToSummaryLines(src.description, 40);
+    const { lines, truncated } = splitToSummaryLines(src.description, MAX_DETAIL_DESCRIPTION_LINES);
     if (lines.length > 0) out.descriptionLines = lines;
     if (truncated) out.descriptionTruncated = true;
   }

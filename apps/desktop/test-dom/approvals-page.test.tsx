@@ -506,3 +506,17 @@ describe("Approvals — the team shown in Details (Linear slice 5a)", () => {
     expect(await screen.findByText("Team: Core Platform")).toBeTruthy();
   });
 });
+
+// Linear slice 5b.1 (owner 2026-09-25): "make the card able to show all the description past 40 lines".
+describe("Approvals — Details shows the WHOLE description", () => {
+  it("renders every line of a long ticket, with no 'more not shown'", async () => {
+    const card = apr("e1", { workspaceId: "employer-work", targetSystem: "linear", subjectKind: "external_action" });
+    const lines = Array.from({ length: 120 }, (_, i) => `step ${i}`);
+    const detail = { approvalId: "e1", sendState: "awaiting_approval" as const, targetSystem: "linear" as const, title: "Long ticket", descriptionLines: lines };
+    render(<Approvals approvals={[card]} onDecide={async () => "applied" as const} activeWorkspaceId="employer-work" onOpenDetail={async () => ({ ok: true as const, detail })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(await screen.findByText("step 0")).toBeTruthy();
+    expect(screen.getByText("step 119")).toBeTruthy();
+    expect(screen.queryByText("(more not shown)")).toBeNull();
+  });
+});

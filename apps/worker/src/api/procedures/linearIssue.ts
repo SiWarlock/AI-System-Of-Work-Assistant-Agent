@@ -11,13 +11,16 @@
 // ⛔ REQ-F-017 — the form carries no owner and no date. An input that carries either is refused, not dropped.
 import { ok, err, failure } from "@sow/contracts";
 import type { FailureVariant, Result, UiSafeLinearProposalResult, UiSafeLinearTeamList } from "@sow/contracts";
-import { UiSafeLinearProposalResultSchema, UiSafeLinearTeamListSchema } from "@sow/contracts";
+import { UiSafeLinearProposalResultSchema, UiSafeLinearTeamListSchema, LINEAR_DESCRIPTION_MAX } from "@sow/contracts";
 import { router, publicProcedure, authedResolver } from "../router";
 
 /** The longest title the form sends. The form enforces the same bound. */
 export const MAX_LINEAR_TITLE = 255;
-/** The longest description the form sends — below the 16 KiB propose bound once serialized, in the usual case. */
-export const MAX_LINEAR_DESCRIPTION = 8000;
+/**
+ * The longest description the form sends (Linear slice 5b.1, owner: ~250 lines). Shared with the renderer through the
+ * contract, and inside the propose payload bound even when every character escapes to two once serialized.
+ */
+export const MAX_LINEAR_DESCRIPTION = LINEAR_DESCRIPTION_MAX;
 
 export interface LinearTeamsInput {
   readonly workspaceId: string;

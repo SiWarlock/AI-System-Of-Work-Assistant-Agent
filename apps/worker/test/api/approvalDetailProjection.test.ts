@@ -12,6 +12,7 @@ import {
   UiSafeLinearTeamListSchema,
   UiSafeLinearProposalResultSchema,
   UI_SAFE_ALLOWLIST,
+  MAX_DETAIL_DESCRIPTION_LINES,
 } from "@sow/contracts";
 import {
   toUiSafeApprovalDetail,
@@ -66,12 +67,22 @@ describe("toUiSafeApprovalDetail", () => {
     expect(out).toEqual({ approvalId: "idem_abc", sendState: "refused", refusal: "payload_mismatch", targetSystem: "linear" });
   });
 
-  it("collapses a multi-line title to one line, and flags a truncated description", () => {
-    const long = Array.from({ length: 45 }, (_, i) => `line ${i}`).join(NL);
+  it("collapses a multi-line title to one line, and flags a description only when it passes the Details cap", () => {
+    const long = Array.from({ length: MAX_DETAIL_DESCRIPTION_LINES + 5 }, (_, i) => `l${i}`).join(NL);
     const out = toUiSafeApprovalDetail({ ...base, title: `two${NL}lines`, description: long });
     expect(out.title).toBe("two lines");
-    expect(out.descriptionLines).toHaveLength(40);
+    expect(out.descriptionLines).toHaveLength(MAX_DETAIL_DESCRIPTION_LINES);
     expect(out.descriptionTruncated).toBe(true);
+    expect(UiSafeApprovalDetailSchema.safeParse(out).success).toBe(true);
+  });
+
+  it("⛔ Linear slice 5b.1 (owner): a long ticket is shown WHOLE — 300 lines, and a 5,000-character line, nothing cut", () => {
+    const lines = Array.from({ length: 300 }, (_, i) => `step ${i}`);
+    const para = "word ".repeat(1000).trim();
+    const out = toUiSafeApprovalDetail({ ...base, description: [...lines, para].join(NL) });
+    expect(out.descriptionTruncated).toBeUndefined();
+    expect(out.descriptionLines?.slice(0, 300)).toEqual(lines);
+    expect(out.descriptionLines?.slice(300).join("")).toBe(para);
     expect(UiSafeApprovalDetailSchema.safeParse(out).success).toBe(true);
   });
 

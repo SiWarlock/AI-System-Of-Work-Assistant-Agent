@@ -174,7 +174,7 @@ import {
 import type { SignalCountsHealth } from "./composition/living-vault";
 import type { CopilotNoteExistsProbe } from "./api/procedures/copilotProposeKnowledge";
 import type { CopilotServingOracle } from "./api/procedures/copilotProvenanceStamp";
-import { selectServingOracleFactory } from "./api/procedures/servingContextLoader";
+import { selectServingOracleFactory, isGoLiveOracleSelected } from "./api/procedures/servingContextLoader";
 import type { CommittedVaultReader } from "./api/procedures/servingContextLoader";
 import { createReconcileScheduler } from "./composition/reconcileScheduler";
 import type { LoggedReconcileOutcome, ReconcileScheduler } from "./composition/reconcileScheduler";
@@ -504,11 +504,11 @@ export interface BootConfig extends BackendsConfig {
   /**
    * Real Copilot model path (OFF by default — the interim runs the deterministic stub over a LOCAL
    * route, so nothing egresses and no notice fires). When true, Copilot synthesis calls the Claude
-   * SUBSCRIPTION completion client over a CLOUD Claude route, and each dev-provisioned workspace gets
-   * the CONSENT posture (`cloudCopilotPosture`) — so an Employer-Work ask egresses to Anthropic WITH
-   * the visible notice (the owner's stated posture: "fine with Employer-Work going to a cloud model, I
-   * just want a notice"). Flipping this to true is the interim consent gesture until the authoritative
-   * per-workspace `WorkspaceConfigRepository` posture lands.
+   * SUBSCRIPTION completion client over a CLOUD Claude route. ⚠ This flag is NOT the rule-5 consent: an
+   * Employer-Work ask egresses only if that workspace's STORED egress posture allows the processor
+   * (the 9.10-A store-backed resolver; employer_work is default-seeded with `[claude]` at provisioning by
+   * the owner's 2026-07-25 decision), with the visible notice. Corrected 2026-09-25: this used to name the
+   * deleted `cloudCopilotPosture` as the consent and call this flag the interim consent gesture.
    */
   readonly copilotRealModel?: boolean;
   /** Optional Claude model id for the real Copilot path; defaults to DEFAULT_CLAUDE_COPILOT_MODEL. */
@@ -592,11 +592,11 @@ export interface BootConfig extends BackendsConfig {
   /**
    * The Copilot WRITE-VIA-APPROVALS tool (Phase-C C5.3 — OFF by default; requires `copilotAgentMode` too).
    * When true, the agent MAY hold the `copilot.propose_action` tool, which records a PENDING §9.8 Approval
-   * (never a direct write; the owner approves it). Even with this ON, propose stays STRUCTURALLY OFF at
-   * runtime because the content-trust resolver (`deriveCopilotContentTrust`) is the fail-closed interim
-   * ('untrusted' always) — so a live ask never resolves to a propose-capable job. Real go-live is gated on
-   * C5.4 (per-content provenance + the §9.8 read-model workspace-scoping fix). This flag is ALWAYS an AND-term
-   * with the trust verdict, never a standalone override.
+   * (never a direct write; the owner approves it). Even with this ON, propose stays OFF at runtime unless the
+   * content-trust resolver (`deriveCopilotContentTrust`) returns 'trusted' — EVERY retrieved source must carry
+   * `knowledge_writer` provenance, which the live retrieval adapters do not yet prove — AND `gateProposeArming`'s
+   * five preconditions hold. (Corrected 2026-09-25: this said the resolver is "'untrusted' always"; it is a real
+   * per-source check now.) This flag is ALWAYS an AND-term with the trust verdict, never a standalone override.
    */
   readonly copilotProposeMode?: boolean;
   /**
@@ -2266,9 +2266,11 @@ export function withSubscriptionExtractionArming(
 // (the mappings below, inside `agentSynthesisFactory`'s thunk) — no COMPOSITE gate exists. Per the
 // plan's own five-precondition text (task 22.1), propose stays OFF unless ALL FIVE hold:
 //   (1) content trust is REAL — `deriveCopilotContentTrust` can actually return 'trusted' (Phase 20).
-//       Boot-time proxy: the go-live SELECTED serving oracle is live (`servingOracleFactory !==
-//       undefined`, i.e. `copilotProvenanceStamping && provenanceBundle && copilotServingOracleGoLive`
-//       all hold) — the mechanism the trust-flip depends on per the L580 spec note.
+//       Boot-time proxy: the go-live SELECTED serving oracle is live — `isGoLiveOracleSelected(servingOracleFactory,
+//       loaderBackedServingOracle)`, i.e. `copilotProvenanceStamping && provenanceBundle && copilotServingOracleGoLive`
+//       all hold — the mechanism the trust-flip depends on per the L580 spec note. ⚠ CORRECTED 2026-09-25 (slice
+//       5b.1): the mapping used to be `servingOracleFactory !== undefined`, which is ALSO true for the interim oracle
+//       (stamping on, go-live off), so this line described a check the code did not make.
 //   (2) the KnowledgeWriter commit / auto-ingest path is provisioned (Phase 18): `proofSpineParams !==
 //       undefined`.
 //   (3) the Keychain signing key resolves (Phase 17): the boot-computed `signing: StamperDeps |
@@ -3984,8 +3986,10 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
   // after this line runs, so the closure is safe despite the textual ordering) AND used below (once
   // `surface` exists) to mint the operator-visible OFF health item.
   const proposeArming = gateProposeArming({
-    // (1) content trust real — the go-live SELECTED serving oracle is live (Phase 20).
-    contentTrustReal: servingOracleFactory !== undefined,
+    // (1) content trust real — the go-live SELECTED serving oracle is live (Phase 20). ⛔ The SELECTION, not mere
+    // presence: with stamping on and go-live off the factory is the interim oracle, which this used to count as real
+    // (slice 5b.1, owner: fix the check — pinned by test/boot/contentTrustRealGoLive.test.ts).
+    contentTrustReal: isGoLiveOracleSelected(servingOracleFactory, loaderBackedServingOracle),
     // (2) the KnowledgeWriter commit / auto-ingest path is provisioned (Phase 18).
     proofSpineProvisioned: proofSpineParams !== undefined,
     // (3) the Keychain signing key resolves (Phase 17) — the SAME `signing` task 22.4 threads to both

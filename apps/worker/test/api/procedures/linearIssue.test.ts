@@ -119,6 +119,6 @@ describe("linearIssue.propose — the form is validated at the boundary; a bad f
 
   it("the bounds are what the form enforces too", () => {
     expect(MAX_LINEAR_TITLE).toBe(255);
-    expect(MAX_LINEAR_DESCRIPTION).toBe(8000);
+    expect(MAX_LINEAR_DESCRIPTION).toBe(20000); // Linear slice 5b.1 (owner): ~250 lines
   });
 });

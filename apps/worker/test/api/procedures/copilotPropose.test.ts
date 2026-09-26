@@ -312,3 +312,47 @@ describe("handleCopilotProposeToolCall — the copilot.propose_action handler (f
     expect(f.calls()).toBe(0);
   });
 });
+
+// Linear slice 5b.1 (owner 2026-09-25, "workspace in every key", rule 4): neither key builder folds a workspace, so
+// the same Copilot proposal in two workspaces derived the SAME keys and the second was refused. The SERVER-BOUND
+// workspace is now folded into the identity at derive time — never a value the model wrote.
+describe("the workspace is folded into every Copilot proposal's keys (Linear slice 5b.1, rule 4)", () => {
+  const keysOf = (r: ReturnType<typeof deriveCopilotProposedAction>): [string, string] => {
+    if (!isOk(r)) throw new Error("derive failed");
+    return [r.value.idempotencyKey, r.value.canonicalObjectKey];
+  };
+
+  it("the same intent in two workspaces derives DIFFERENT keys", () => {
+    const a = keysOf(deriveCopilotProposedAction(intent(), { workspaceId: "employer-work" }));
+    const b = keysOf(deriveCopilotProposedAction(intent(), { workspaceId: "personal-life" }));
+    expect(a[0]).not.toBe(b[0]);
+    expect(a[1]).not.toBe(b[1]);
+  });
+
+  it("⛔ the model cannot supply or override the workspace — any identity key that normalizes to 'workspace' is replaced", () => {
+    const honest = keysOf(deriveCopilotProposedAction(intent(), { workspaceId: "employer-work" }));
+    for (const smuggled of ["workspace", "Workspace", " workspace "]) {
+      const i = intent({ identity: { ...intent().identity, [smuggled]: "personal-life" } });
+      expect(keysOf(deriveCopilotProposedAction(i, { workspaceId: "employer-work" })), smuggled).toEqual(honest);
+    }
+  });
+
+  it("the Linear form's keys are byte-identical: its identity already carries the same workspace", () => {
+    const form = {
+      targetSystem: "linear",
+      operation: "linear.create_issue",
+      identity: { workspace: "employer-work", draft: "3f2b8c1e-5d4a-4e7b-9c0d-1a2b3c4d5e6f" },
+      payload: { teamId: "t", teamName: "T", title: "Fix it", description: "", priority: 0 },
+    };
+    expect(keysOf(deriveCopilotProposedAction(form, { workspaceId: "employer-work" }))).toEqual(keysOf(deriveCopilotProposedAction(form)));
+  });
+
+  it("proposeCopilotAction folds the SERVER-BOUND workspace, so one intent in two workspaces is two independent proposals", async () => {
+    const s1 = fakeSink();
+    const s2 = fakeSink();
+    await proposeCopilotAction({ intent: intent(), workspaceId: "employer-work" as WorkspaceId, sink: s1.sink });
+    await proposeCopilotAction({ intent: intent(), workspaceId: "personal-life" as WorkspaceId, sink: s2.sink });
+    expect(s1.last()?.action.idempotencyKey).toBeDefined();
+    expect(s1.last()?.action.idempotencyKey).not.toBe(s2.last()?.action.idempotencyKey);
+  });
+});

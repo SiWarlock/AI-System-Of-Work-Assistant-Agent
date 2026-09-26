@@ -33,6 +33,7 @@ import {
   routeCopilotProposal,
   proposeCopilotAction,
   handleCopilotProposeToolCall,
+  MAX_PROPOSE_PAYLOAD_CHARS,
   type CopilotProposeSink,
 } from "@sow/worker/api/procedures/copilotPropose";
 import {
@@ -292,14 +293,14 @@ describe("propose governance — leakage / injection fail-closed (safety rules 3
     const bad = deriveCopilotProposedAction(intent({ targetSystem: "not-a-real-system" }));
     expect(isErr(bad)).toBe(true);
     if (isErr(bad)) expect(bad.error.cause?.code).toBe("COPILOT_PROPOSE_BAD_TARGET");
-    const big = deriveCopilotProposedAction(intent({ payload: { blob: "x".repeat(20 * 1024) } }));
+    const big = deriveCopilotProposedAction(intent({ payload: { blob: "x".repeat(MAX_PROPOSE_PAYLOAD_CHARS + 1) } }));
     expect(isErr(big)).toBe(true);
     if (isErr(big)) expect(big.error.cause?.code).toBe("COPILOT_PROPOSE_PAYLOAD_TOO_LARGE");
   });
 
   const SECRET = "SUPER_SECRET_sk-abc123-EVIL";
   it("error_surface_carries_no_raw_content: the INTERNAL error object carries only a bounded code, never the secret", () => {
-    const big = deriveCopilotProposedAction(intent({ payload: { blob: SECRET + "x".repeat(20 * 1024) } }));
+    const big = deriveCopilotProposedAction(intent({ payload: { blob: SECRET + "x".repeat(MAX_PROPOSE_PAYLOAD_CHARS) } }));
     expect(isErr(big)).toBe(true);
     if (isErr(big)) {
       expect(big.error.cause?.code).toBe("COPILOT_PROPOSE_PAYLOAD_TOO_LARGE");
@@ -317,7 +318,7 @@ describe("propose governance — leakage / injection fail-closed (safety rules 3
     // The AC says "surfaced TO THE MODEL" — the model sees handleCopilotProposeToolCall's returned text, not the
     // internal error. Pin the actual surface: derivation fails BEFORE the sink, so any sink is inert here.
     const deps = { workspaceId: WS, sink: fakeSink().sink };
-    const big = await handleCopilotProposeToolCall(intent({ payload: { blob: SECRET + "x".repeat(20 * 1024) } }), deps);
+    const big = await handleCopilotProposeToolCall(intent({ payload: { blob: SECRET + "x".repeat(MAX_PROPOSE_PAYLOAD_CHARS) } }), deps);
     expect(big.isError).toBe(true);
     const bigText = big.content.map((p) => p.text).join(" ");
     expect(bigText).toContain("COPILOT_PROPOSE_PAYLOAD_TOO_LARGE");
