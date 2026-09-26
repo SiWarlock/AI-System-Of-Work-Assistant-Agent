@@ -84,6 +84,14 @@ export interface RetrievedContext {
 /** The workspace-scoped Copilot retrieval port. Unknown workspace → typed err (fail-closed). */
 export interface CopilotRetrievalPort {
   readonly retrieve: (workspaceId: string, question: string) => MaybeAsyncResult<RetrievedContext>;
+  /**
+   * OPTIONAL (Linear slice 5b.4b, critic 2026-09-25) — a chat follow-up's retrieval as ONE context: the new question's
+   * search plus the owner's `previous` question's search, merged (`mergeRetrievedContexts`). A port that STAMPS
+   * provenance must implement it, so its per-context checks see the merged context (rule 6); the provenance-stamping
+   * decorator does. Without it, the ask merges two `retrieve` calls itself and REMOVES every provenance stamp, so a
+   * merged follow-up is never trusted.
+   */
+  readonly retrieveFollowUp?: (workspaceId: string, question: string, previous: string) => MaybeAsyncResult<RetrievedContext>;
 }
 
 /** Fail-closed err for a workspace the retrieval source doesn't recognize.
@@ -600,22 +608,30 @@ export async function answerCopilotQuestion(
     memory !== undefined && chatId !== undefined
       ? historyFromTurns(await memory.recent(input.workspaceId, chatId, COPILOT_HISTORY_MAX_TURNS))
       : NO_HISTORY;
-  const retrieved = await deps.retrieval.retrieve(input.workspaceId, input.question);
+  // A follow-up ALSO searches the owner's PREVIOUS question (owner decision 2026-09-25) — a SEPARATE search, merged
+  // (review 2026-09-25: one joined query required every word of both in gbrain's keyword arm). ⚠ Rule 5: that saved
+  // text goes to retrieval again BEFORE the egress veto below, as the new question does (the pre-veto retrieval is a
+  // separate, tracked finding). The extra search is best-effort: if it fails, the ask answers from the new question's
+  // search alone — but a context from ANOTHER workspace, or a scope-mismatch error, fails the ask closed (rule 4).
+  const previous = previousOwnerQuestion(history);
+  const followUp = previous !== undefined ? deps.retrieval.retrieveFollowUp : undefined;
+  const retrieved =
+    previous !== undefined && followUp !== undefined
+      ? await followUp(input.workspaceId, input.question, previous) // ONE stamped context (rule 6)
+      : await deps.retrieval.retrieve(input.workspaceId, input.question);
   if (!isOk(retrieved)) return retrieved;
   const scoped = enforceRetrievalScope(input.workspaceId, retrieved.value);
   if (!isOk(scoped)) return scoped;
-  // A follow-up ALSO searches the owner's PREVIOUS question (owner decision 2026-09-25) — a SEPARATE search, merged by
-  // citation (review 2026-09-25: one joined query required every word of both in gbrain's keyword arm). That text
-  // already went through this same retrieval in the earlier ask. The extra search is best-effort: if it fails, the ask
-  // answers from the new question's search alone — but a context scoped to ANOTHER workspace still fails it closed.
   let context = scoped.value;
-  const previous = previousOwnerQuestion(history);
-  if (previous !== undefined) {
+  if (previous !== undefined && followUp === undefined) {
     const extra = await deps.retrieval.retrieve(input.workspaceId, previous);
+    if (!isOk(extra) && extra.error.cause?.code === "RETRIEVAL_SCOPE_MISMATCH") return extra;
     if (isOk(extra)) {
       const extraScoped = enforceRetrievalScope(input.workspaceId, extra.value);
       if (!isOk(extraScoped)) return extraScoped;
-      context = mergeRetrievedContexts(context, extraScoped.value);
+      // ⛔ Rule 6: this port cannot check the merged context as a whole, so the merged context carries NO provenance
+      // and is never trusted.
+      context = withoutProvenance(mergeRetrievedContexts(context, extraScoped.value));
     }
   }
   const answered = await runGovernedCopilotSynthesis(deps, input.workspaceId, input.question, context, history);
@@ -628,23 +644,34 @@ export async function answerCopilotQuestion(
 
 /**
  * Merge a second search's passages into the first (Linear slice 5b.4b): the first context's passages, then each of the
- * second's whose citation is new — every passage still paired with its own source. A first context whose blocks and
- * sources are not aligned is returned unchanged (appending would misalign them). Both contexts are the same
- * workspace's (the caller scope-checked each). Pure.
+ * second's that is NEW — a passage is its (citation, text) pair, since gbrain returns one source per CHUNK under one
+ * page citation (critic 2026-09-25: deduping by citation alone dropped every chunk after the first). Every passage
+ * stays paired with its own source. A first context whose blocks and sources are not aligned is returned unchanged
+ * (appending would misalign them). Both contexts are the same workspace's (the caller scope-checked each). Pure.
  */
 export function mergeRetrievedContexts(first: RetrievedContext, second: RetrievedContext): RetrievedContext {
   if (first.blocks.length !== first.sources.length) return first;
-  const seen = new Set(first.sources.map((src) => src.citationId));
+  const key = (citationId: string, block: string): string => JSON.stringify([citationId, block]);
+  const seen = new Set(first.sources.map((src, i) => key(src.citationId, first.blocks[i] ?? "")));
   const sources = [...first.sources];
   const blocks = [...first.blocks];
   second.sources.forEach((src, i) => {
     const block = second.blocks[i];
-    if (block === undefined || seen.has(src.citationId)) return;
-    seen.add(src.citationId);
+    if (block === undefined || seen.has(key(src.citationId, block))) return;
+    seen.add(key(src.citationId, block));
     sources.push(src);
     blocks.push(block);
   });
   return { workspaceId: first.workspaceId, blocks, sources };
+}
+
+/** A context with every provenance stamp removed — never trusted (`deriveCopilotContentTrust` needs every source stamped). */
+function withoutProvenance(context: RetrievedContext): RetrievedContext {
+  return {
+    workspaceId: context.workspaceId,
+    blocks: context.blocks,
+    sources: context.sources.map((src) => ({ citationId: src.citationId, title: src.title })),
+  };
 }
 
 /**

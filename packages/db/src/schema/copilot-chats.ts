@@ -9,9 +9,11 @@
 // procedures that list, open and delete chats (slice 5b.4c).
 // ⛔ Rule 4 / WS-8: every row carries its workspace, and every repository method is keyed by (workspaceId, chatId).
 // ⛔ Rule 7: `question` and `answer` ARE raw content (the owner's words and the Copilot's gated answer). They are
-// never logged and never in a health/diagnostics read. They leave the worker only (a) to the renderer, for the same
-// workspace's chat, and (b) to the model provider as that chat's history, inside the same ask and after the same
-// egress veto (rule 5) as the question itself.
+// never logged and never in a health/diagnostics read. They leave the worker (a) to the renderer, for the same
+// workspace's chat; (b) to the model provider as that chat's history, inside the same ask and after the same egress
+// veto (rule 5) as the question itself; and (c) the owner's previous QUESTION only, to retrieval on a follow-up — which,
+// like the question itself, runs BEFORE the veto (critic 2026-09-25; the pre-veto retrieval is a separate, tracked
+// rule-5 finding, and gbrain may embed a query with a cloud embedder).
 //
 // REGISTERED in the schema barrel (`./index.ts`, and the pg mirror in `./pg/index.ts`) with migration
 // `migrations/{sqlite,pg}/0019_copilot_chats.sql` in the SAME change (the schema↔migration coverage detector).

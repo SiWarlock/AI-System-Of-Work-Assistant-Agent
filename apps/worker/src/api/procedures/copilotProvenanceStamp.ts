@@ -64,7 +64,7 @@ import type {
   QuarantineLedger,
   DbPointer,
 } from "@sow/knowledge";
-import { enforceRetrievalScope } from "./copilot";
+import { enforceRetrievalScope, mergeRetrievedContexts } from "./copilot";
 import type { CopilotRetrievalPort, RetrievedContext, RetrievedSource, SourceProvenance } from "./copilot";
 
 /**
@@ -205,39 +205,69 @@ function sourcesWellFormed(context: RetrievedContext): boolean {
  * `MaybeAsyncResult`; the sole `retrieve` consumer (`answerCopilotQuestion`) awaits.
  */
 export function createProvenanceStampingRetrieval(deps: ProvenanceStampingDeps): CopilotRetrievalPort {
+  /** Stamp ONE scoped-in context: WS-8 re-check, well-formedness, one oracle verdict over the WHOLE context. */
+  const stamp = async (workspaceId: string, raw: RetrievedContext): Promise<Result<RetrievedContext, FailureVariant>> => {
+    // WS-8 (defense-in-depth over any adapter): the context MUST be for the requested workspace — a
+    // mismatch fails closed BEFORE the oracle sees any cross-workspace content.
+    const scoped = enforceRetrievalScope(workspaceId, raw);
+    if (!isOk(scoped)) return scoped;
+    const context = scoped.value;
+
+    // Malformed sources would throw in the map below — fail closed with a typed err instead (§16).
+    if (!sourcesWellFormed(context)) {
+      return err(
+        failure("validation_rejected", "retrieval context sources are malformed", {
+          cause: { code: "RETRIEVAL_CONTEXT_MALFORMED" },
+        }),
+      );
+    }
+
+    const verdict = await deps.oracle.admit(workspaceId, context);
+    // Oracle err ⇒ cannot prove authorship ⇒ unstamped passthrough (honestly "unknown", never trusted).
+    if (!isOk(verdict)) return ok(stripAll(context));
+
+    return ok(stampFromVerdict(context, verdict.value));
+  };
+  const fault = (): Result<never, FailureVariant> =>
+    err(
+      failure("degraded_unavailable", "provenance-stamping retrieval faulted", {
+        cause: { code: "PROVENANCE_STAMP_FAULT" },
+      }),
+    );
   return {
     retrieve: async (workspaceId, question): Promise<Result<RetrievedContext, FailureVariant>> => {
       try {
         const retrieved = await deps.inner.retrieve(workspaceId, question);
         if (!isOk(retrieved)) return retrieved; // inner err ⇒ propagate; oracle never consulted
-
-        // WS-8 (defense-in-depth over any adapter): the context MUST be for the requested workspace — a
-        // mismatch fails closed BEFORE the oracle sees any cross-workspace content.
-        const scoped = enforceRetrievalScope(workspaceId, retrieved.value);
-        if (!isOk(scoped)) return scoped;
-        const context = scoped.value;
-
-        // Malformed sources would throw in the map below — fail closed with a typed err instead (§16).
-        if (!sourcesWellFormed(context)) {
-          return err(
-            failure("validation_rejected", "retrieval context sources are malformed", {
-              cause: { code: "RETRIEVAL_CONTEXT_MALFORMED" },
-            }),
-          );
-        }
-
-        const verdict = await deps.oracle.admit(workspaceId, context);
-        // Oracle err ⇒ cannot prove authorship ⇒ unstamped passthrough (honestly "unknown", never trusted).
-        if (!isOk(verdict)) return ok(stripAll(context));
-
-        return ok(stampFromVerdict(context, verdict.value));
+        return await stamp(workspaceId, retrieved.value);
       } catch {
         // Any thrown/rejected fault (a buggy inner/oracle) ⇒ a typed err, never a throw across the boundary.
-        return err(
-          failure("degraded_unavailable", "provenance-stamping retrieval faulted", {
-            cause: { code: "PROVENANCE_STAMP_FAULT" },
-          }),
-        );
+        return fault();
+      }
+    },
+    /**
+     * Linear slice 5b.4b (critic 2026-09-25, measured) — a chat follow-up as ONE context. ⛔ Rule 6: stamped one search
+     * at a time, the oracle's per-context checks (the factIdentity injectivity check) never saw the MERGED context, so
+     * two citations it rejects together were each admitted alone. Here both searches run on the INNER port, are merged,
+     * and the oracle is consulted ONCE on the merged context. The previous question's search is best-effort (an inner
+     * error drops it), but a context from another workspace fails closed (rule 4), as on the new question's search.
+     */
+    retrieveFollowUp: async (workspaceId, question, previous): Promise<Result<RetrievedContext, FailureVariant>> => {
+      try {
+        const first = await deps.inner.retrieve(workspaceId, question);
+        if (!isOk(first)) return first;
+        const firstScoped = enforceRetrievalScope(workspaceId, first.value);
+        if (!isOk(firstScoped)) return firstScoped;
+        let merged = firstScoped.value;
+        const extra = await deps.inner.retrieve(workspaceId, previous);
+        if (isOk(extra)) {
+          const extraScoped = enforceRetrievalScope(workspaceId, extra.value);
+          if (!isOk(extraScoped)) return extraScoped;
+          merged = mergeRetrievedContexts(merged, extraScoped.value);
+        }
+        return await stamp(workspaceId, merged);
+      } catch {
+        return fault();
       }
     },
   };

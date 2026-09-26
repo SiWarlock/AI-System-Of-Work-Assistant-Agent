@@ -772,6 +772,37 @@ describe("answerCopilotQuestion — chat memory (Linear slice 5b.4b)", () => {
     expect(m.saves).toEqual([]);
   });
 
+  it("⛔ rule 6 (critic 2026-09-25): a retrieval that can stamp a follow-up as ONE context does both searches itself", async () => {
+    const m = memory({ [`${WS}/c`]: [stored("prev?", "a")] });
+    const calls: string[] = [];
+    const retrieval: CopilotDeps["retrieval"] = {
+      retrieve: async (_ws, q) => (calls.push(`retrieve:${q}`), ok(ctx(WS))),
+      retrieveFollowUp: async (_ws, q, prev) => (calls.push(`followUp:${q}|${prev}`), ok(ctx(WS))),
+    };
+    await answerCopilotQuestion(base({ chats: m.mem, retrieval }), { workspaceId: WS, question: "Core", chatId: "c" });
+    expect(calls).toEqual(["followUp:Core|prev?"]);
+  });
+
+  it("⛔ rule 6: without that, a merged follow-up is NEVER trusted — every provenance stamp is removed", async () => {
+    const m = memory({ [`${WS}/c`]: [stored("prev?", "a")] });
+    const s = recordingSynth();
+    const kw = (id: string): RetrievedContext => ({ workspaceId: WS, blocks: [id], sources: [{ citationId: id, title: id, provenance: "knowledge_writer" }] });
+    const r0 = recordingRetrieval(kw("src:new"), { "prev?": ok(kw("src:prev")) });
+    await answerCopilotQuestion(base({ chats: m.mem, synthesis: s.synth, retrieval: r0.retrieval }), { workspaceId: WS, question: "Core", chatId: "c" });
+    const merged = s.seen()[2] as RetrievedContext;
+    expect(merged.sources.map((x) => [x.citationId, x.provenance])).toEqual([
+      ["src:new", undefined],
+      ["src:prev", undefined],
+    ]);
+  });
+
+  it("⛔ rule 4: the previous question's search reporting a SCOPE MISMATCH fails the ask closed (not best-effort)", async () => {
+    const m = memory({ [`${WS}/c`]: [stored("prev?", "a")] });
+    const r0 = recordingRetrieval(ctx(WS), { "prev?": err(failure("validation_rejected", "x", { cause: { code: "RETRIEVAL_SCOPE_MISMATCH" } })) });
+    const r = await answerCopilotQuestion(base({ chats: m.mem, retrieval: r0.retrieval }), { workspaceId: WS, question: "q", chatId: "c" });
+    expect(isErr(r) && r.error.cause?.code).toBe("RETRIEVAL_SCOPE_MISMATCH");
+  });
+
   it("a failed synthesis or a gate rejection saves nothing", async () => {
     const m = memory();
     const failing: CopilotSynthesisPort = { synthesize: () => err(failure("provider_failed", "x")) };
@@ -785,10 +816,15 @@ describe("answerCopilotQuestion — chat memory (Linear slice 5b.4b)", () => {
 
 describe("mergeRetrievedContexts — a follow-up's two searches, merged by citation (Linear slice 5b.4b)", () => {
   const src = (id: string) => ({ citationId: id, title: id });
-  it("keeps the first search's passages, then the second's NEW citations — each passage with its own source", () => {
-    const a: RetrievedContext = { workspaceId: WS, blocks: ["a1", "shared-from-a"], sources: [src("a1"), src("shared")] };
-    const b: RetrievedContext = { workspaceId: WS, blocks: ["shared-from-b", "b1"], sources: [src("shared"), src("b1")] };
-    expect(mergeRetrievedContexts(a, b)).toEqual({ workspaceId: WS, blocks: ["a1", "shared-from-a", "b1"], sources: [src("a1"), src("shared"), src("b1")] });
+  it("keeps the first search's passages, then the second's NEW passages — an identical (citation, text) pair once", () => {
+    const a: RetrievedContext = { workspaceId: WS, blocks: ["a1", "shared text"], sources: [src("a1"), src("shared")] };
+    const b: RetrievedContext = { workspaceId: WS, blocks: ["shared text", "b1"], sources: [src("shared"), src("b1")] };
+    expect(mergeRetrievedContexts(a, b)).toEqual({ workspaceId: WS, blocks: ["a1", "shared text", "b1"], sources: [src("a1"), src("shared"), src("b1")] });
+  });
+  it("keeps every CHUNK of a page — gbrain returns one source per chunk under one citation; only an identical pair is dropped", () => {
+    const a: RetrievedContext = { workspaceId: WS, blocks: ["core chunk"], sources: [src("gbrain:core")] };
+    const b: RetrievedContext = { workspaceId: WS, blocks: ["core chunk", "loop chunk", "root cause chunk"], sources: [src("gbrain:core"), src("gbrain:login"), src("gbrain:login")] };
+    expect(mergeRetrievedContexts(a, b).blocks).toEqual(["core chunk", "loop chunk", "root cause chunk"]);
   });
   it("never appends a source without its passage, and leaves a misaligned first search as it is", () => {
     const a: RetrievedContext = { workspaceId: WS, blocks: ["a1"], sources: [src("a1")] };

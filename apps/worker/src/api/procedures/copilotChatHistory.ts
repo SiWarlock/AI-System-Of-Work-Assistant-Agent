@@ -10,7 +10,8 @@
 //   • only the question and the answer LINES as they passed the UI-safe gate — never citations, the egress notice,
 //     tool results or retrieved passages;
 //   • bounded — whole turns, newest first, at most COPILOT_HISTORY_MAX_TURNS and COPILOT_HISTORY_MAX_CHARS of text
-//     (JSON escaping can make the rendered block larger — up to about twice, for text full of quotes or backslashes);
+//     (JSON escaping can make the rendered block up to about twice that, for text full of quotes or backslashes —
+//     control characters and lone surrogates, which JSON writes as 6-character escapes, are removed first);
 //   • one JSON string per message, the role set by the WORKER — an earlier answer cannot forge an "Owner:" line, a
 //     passage header or a "Question:" line;
 //   • invisible characters removed first: every Unicode default-ignorable code point (bidi controls, zero-width
@@ -83,6 +84,9 @@ export function sanitizeHistoryText(s: string): string {
   for (const c of s) {
     const cp = c.codePointAt(0) ?? 0;
     if (isOtherLineBreak(cp)) out += NL;
+    // A LONE surrogate (critic 2026-09-25) is not text, and JSON writes it as a 6-character escape; a real pair
+    // arrives here as ONE astral code point, so this never splits one.
+    else if (cp >= 0xd800 && cp <= 0xdfff) continue;
     else if (!isInvisible(cp)) out += c;
   }
   return out;

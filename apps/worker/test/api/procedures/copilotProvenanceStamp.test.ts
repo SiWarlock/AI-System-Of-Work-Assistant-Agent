@@ -741,3 +741,49 @@ describe("createServingGateOracle — wired through the decorator (end-to-end tr
     }
   });
 });
+
+// Linear slice 5b.4b, critic of 9be3439a (measured): a follow-up runs TWO searches (the new question and the owner's
+// previous one). Stamped one search at a time, the oracle's per-context checks (the factIdentity injectivity check)
+// never saw the MERGED context, so two citations it would reject together were each admitted alone. ⛔ Rule 6: the
+// decorator now runs a follow-up's searches itself, merges them, and consults the oracle ONCE on the merged context.
+describe("createProvenanceStampingRetrieval — retrieveFollowUp: the oracle sees the MERGED follow-up context", () => {
+  function byQuery(map: Record<string, Result<RetrievedContext, FailureVariant>>): { port: CopilotRetrievalPort; asked: string[] } {
+    const asked: string[] = [];
+    return { port: { retrieve: (_ws, q) => (asked.push(q), map[q] ?? err(failure("provider_failed", "x"))) }, asked };
+  }
+  function recordingOracle(verdict: (c: RetrievedContext) => Result<CopilotServingVerdict, FailureVariant>): { oracle: CopilotServingOracle; seen: RetrievedContext[] } {
+    const seen: RetrievedContext[] = [];
+    return { oracle: { admit: async (_ws, c) => (seen.push(c), verdict(c)) }, seen };
+  }
+
+  it("⛔ consults the oracle ONCE, on the merged context — both searches' citations together", async () => {
+    const inner = byQuery({ Core: ok(ctx(WS, [src("gbrain:a")], ["A"])), "prev?": ok(ctx(WS, [src("gbrain:b")], ["B"])) });
+    const o = recordingOracle(() => gated([]));
+    const port = createProvenanceStampingRetrieval({ inner: inner.port, oracle: o.oracle });
+    const r = await port.retrieveFollowUp?.(WS, "Core", "prev?");
+    expect(inner.asked).toEqual(["Core", "prev?"]);
+    expect(o.seen.map((c) => c.sources.map((x) => x.citationId))).toEqual([["gbrain:a", "gbrain:b"]]);
+    expect(r !== undefined && isOk(r) && r.value.blocks).toEqual(["A", "B"]);
+  });
+
+  it("⛔ the verdict applies to the merged context: what the oracle refuses TOGETHER is not trusted", async () => {
+    const inner = byQuery({ Core: ok(ctx(WS, [src("gbrain:a")], ["A"])), "prev?": ok(ctx(WS, [src("gbrain:b")], ["B"])) });
+    // Admits each citation alone, and NEITHER when both are present (the injectivity signal).
+    const o = recordingOracle((c) => (c.sources.length > 1 ? gated([]) : gated(c.sources.map((x) => x.citationId))));
+    const r = await createProvenanceStampingRetrieval({ inner: inner.port, oracle: o.oracle }).retrieveFollowUp?.(WS, "Core", "prev?");
+    expect(r !== undefined && isOk(r) && deriveCopilotContentTrust(r.value)).toBe("untrusted");
+  });
+
+  it("the previous question's search is best-effort; a context from ANOTHER workspace fails closed; the new one's error propagates", async () => {
+    const o = recordingOracle((c) => gated(c.sources.map((x) => x.citationId)));
+    const failingExtra = byQuery({ Core: ok(ctx(WS, [src("gbrain:a")], ["A"])) });
+    const r1 = await createProvenanceStampingRetrieval({ inner: failingExtra.port, oracle: o.oracle }).retrieveFollowUp?.(WS, "Core", "prev?");
+    expect(r1 !== undefined && isOk(r1) && r1.value.sources.map((x) => x.citationId)).toEqual(["gbrain:a"]);
+    const foreign = byQuery({ Core: ok(ctx(WS, [src("gbrain:a")], ["A"])), "prev?": ok(ctx("ws-OTHER", [src("gbrain:o")], ["O"])) });
+    const r2 = await createProvenanceStampingRetrieval({ inner: foreign.port, oracle: o.oracle }).retrieveFollowUp?.(WS, "Core", "prev?");
+    expect(r2 !== undefined && isErr(r2) && r2.error.cause?.code).toBe("RETRIEVAL_SCOPE_MISMATCH");
+    const failingNew = byQuery({ "prev?": ok(ctx(WS, [src("gbrain:b")], ["B"])) });
+    const r3 = await createProvenanceStampingRetrieval({ inner: failingNew.port, oracle: o.oracle }).retrieveFollowUp?.(WS, "Core", "prev?");
+    expect(r3 !== undefined && isErr(r3)).toBe(true);
+  });
+});

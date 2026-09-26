@@ -99,6 +99,16 @@ describe("sanitizeHistoryText — invisible characters never reach the model", (
     for (const cp of cps) expect(sanitizeHistoryText(`a${ch(cp)}b`), cp.toString(16)).toBe("ab");
     expect(sanitizeHistoryText(`a${ch(0x1d17b)}b`)).toBe(`a${ch(0x1d17b)}b`); // a visible neighbour stays
   });
+  it("removes lone surrogates, so the rendered history is at most about twice the counted text (critic 2026-09-25)", () => {
+    expect(sanitizeHistoryText(`a${String.fromCharCode(0xd800)}b${String.fromCharCode(0xdc00)}c`)).toBe("abc");
+    expect(sanitizeHistoryText("🙂")).toBe("🙂"); // a real pair stays
+    const worst = `${String.fromCharCode(0xd800)}"\\`.repeat(1333);
+    const h = historyFromTurns([row(worst)]);
+    const counted = h.reduce((n, m) => n + m.text.length, 0);
+    const rendered = renderCopilotHistoryBlock(h).slice(1).join("").length;
+    expect(rendered).toBeLessThanOrEqual(2 * counted + 64);
+  });
+
   it("turns every other line break into a plain newline, and keeps tabs and ordinary text", () => {
     const seps = [0x2028, 0x2029, 0x0085, 0x000b, 0x000c].map(ch);
     for (const s of seps) expect(sanitizeHistoryText(`a${s}b`)).toBe(`a${NL}b`);
