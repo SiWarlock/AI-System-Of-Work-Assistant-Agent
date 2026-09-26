@@ -121,8 +121,9 @@ export interface CopilotProps {
   /** Ask a question (A5, wired to query.copilotAsk). Present → the composer is LIVE; absent → disabled scaffold. */
   readonly onAsk?: (question: string) => Promise<AskResult>;
   /**
-   * Linear slice 5b.4d — the ACTIVE workspace's id (null under Global). ⛔ Rule 4: a change clears the transcript and
-   * the draft, so nothing typed or answered in one workspace is shown or sent under another.
+   * Linear slice 5b.4d — the ACTIVE workspace's id (null under Global). ⛔ Rule 4: the panel shows only this workspace's
+   * chat session, draft and chat list — each is kept per workspace (and shows again on return), never shown or sent
+   * under another workspace.
    */
   readonly workspaceKey?: string | null;
   /** Linear slice 5b.4d — the saved-chat controls. Absent ⇒ no chat list and no restore (an unsaved transcript). */
@@ -302,6 +303,8 @@ export interface ChatSession {
 /** The chat sessions, keyed by {@link chatSessionKey}. A tiny external store (`useSyncExternalStore`). */
 export interface ChatSessionStore {
   readonly get: (key: string) => ChatSession | undefined;
+  /** Bumped on every change — the panel renders from it, so ANY session change (another chat's too) re-renders. */
+  readonly version: () => number;
   readonly update: (key: string, fn: (s: ChatSession | undefined) => ChatSession) => void;
   readonly remove: (key: string) => void;
   readonly subscribe: (listener: () => void) => () => void;
@@ -310,11 +313,14 @@ export interface ChatSessionStore {
 export function createChatSessionStore(): ChatSessionStore {
   const sessions = new Map<string, ChatSession>();
   const listeners = new Set<() => void>();
+  let version = 0;
   const emit = (): void => {
+    version += 1;
     for (const l of [...listeners]) l();
   };
   return {
     get: (key) => sessions.get(key),
+    version: () => version,
     update: (key, fn) => {
       sessions.set(key, fn(sessions.get(key)));
       emit();
@@ -370,8 +376,10 @@ export function Copilot(props: CopilotProps): ReactElement {
   if (ownStore.current === null) ownStore.current = createChatSessionStore();
   const store = chats?.sessions ?? ownStore.current;
   const key = chatSessionKey(workspaceKey, chatId);
-  const stored = useSyncExternalStore(store.subscribe, () => store.get(key));
-  const session: ChatSession = stored ?? (chats !== undefined ? LOADING : READY);
+  // Subscribed to the store's VERSION, so a change to ANY session re-renders (critic of 7e616b87: another chat's busy
+  // Delete button stayed disabled when only this chat's snapshot was watched).
+  useSyncExternalStore(store.subscribe, store.version);
+  const session: ChatSession = store.get(key) ?? (chats !== undefined ? LOADING : READY);
   const { turns, pending, status, truncated } = session;
 
   // The draft and the chat list belong to a WORKSPACE: read only when the workspace matches (derived, not reset by an
@@ -384,6 +392,8 @@ export function Copilot(props: CopilotProps): ReactElement {
   const [deleteFailed, setDeleteFailed] = useState<{ readonly workspace: string | null; readonly chatId: string } | null>(null);
   const workspaceRef = useRef(workspaceKey);
   workspaceRef.current = workspaceKey;
+  const chatRef = useRef(chatId);
+  chatRef.current = chatId;
   const listOpenRef = useRef(false);
   listOpenRef.current = list.kind !== "closed";
   const listId = useId();
@@ -446,29 +456,41 @@ export function Copilot(props: CopilotProps): ReactElement {
     );
   };
   const toggleList = (): void => {
+    setDeleteFailed(null); // an alert belongs to the attempt that failed, not to a later look at the list
     if (list.kind === "closed") refreshList();
     else setListView({ workspace: workspaceKey, list: CLOSED });
   };
   const closeListAndFocusInput = (): void => {
+    setDeleteFailed(null);
     setListView({ workspace: workspaceKey, list: CLOSED });
     inputRef.current?.focus();
+  };
+  const retryLoad = (): void => {
+    load();
+    inputRef.current?.focus(); // the Try again button is replaced by "Loading…" — keep focus in the panel
   };
   const deleteChat = (id: string): void => {
     if (chats === undefined) return;
     const ws = workspaceKey;
-    const current = chatId;
     const c = chats;
     setDeleteFailed(null);
+    // The result acts on the state when it LANDS, not at the click (critic of 7e616b87): the open chat, the list's
+    // open state and focus may all have changed meanwhile.
     void c.onDeleteChat(id).then((r) => {
-      if (r.ok) store.remove(chatSessionKey(ws, id));
-      if (workspaceRef.current !== ws) return; // the owner moved on: touch nothing under another workspace
+      const here = workspaceRef.current === ws; // the owner moved on: touch nothing under another workspace
+      if (r.ok) {
+        if (here && chatRef.current === id) c.onNewChat(); // the chat ON SCREEN is gone — start a new one
+        store.remove(chatSessionKey(ws, id));
+      }
+      if (!here) return;
       if (!r.ok) {
         setDeleteFailed({ workspace: ws, chatId: id });
         return;
       }
-      if (id === current) c.onNewChat(); // the open chat is gone — start a new one
-      refreshList();
-      toggleRef.current?.focus();
+      if (listOpenRef.current) {
+        refreshList();
+        toggleRef.current?.focus();
+      }
     });
   };
 
@@ -608,7 +630,7 @@ export function Copilot(props: CopilotProps): ReactElement {
         ) : status === "failed" ? (
           <div className="sow-copilot-empty" role="status">
             <p className="sow-copilot-empty-lead">Could not load this chat.</p>
-            <button className="sow-copilot-chip" type="button" onClick={load}>
+            <button className="sow-copilot-chip" type="button" onClick={retryLoad}>
               Try again
             </button>
           </div>

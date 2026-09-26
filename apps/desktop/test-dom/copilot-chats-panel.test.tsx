@@ -6,7 +6,7 @@
 //     switches to B, and an A answer that arrives AFTER the switch is never shown under B. (Before this slice the
 //     transcript survived a switch — measured by the 5b.4 grounding, 2026-09-25.)
 //   ⛔ Task 9.25: a RESTORED turn goes through `admitReply` like a live one, so its egress notice comes back with it.
-//   • A new chat (not saved yet) opens empty, without an error; a failed load says so.
+//   • A new chat (not saved yet) opens empty, without an error; a failed load says so. Send waits while a chat loads.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, act, type RenderResult } from "@testing-library/react";
 import { Copilot, createChatSessionStore, type CopilotProps, type CopilotChatControls, type ChatSessionStore } from "../renderer/surfaces/copilot/Copilot";
@@ -39,7 +39,7 @@ function controls(over: Partial<CopilotChatControls> = {}): CopilotChatControls 
 function panel(p: Partial<CopilotProps> = {}): CopilotProps {
   return { workspaceScoped: true, onCollapse: () => {}, workspaceKey: EMP, ...p };
 }
-/** Render and let the chat's restore settle (the composer waits while a chat loads). */
+/** Render and let the chat's restore settle (Send waits while a chat loads). */
 async function mount(p: CopilotProps): Promise<RenderResult> {
   let view: RenderResult | undefined;
   await act(async () => {
@@ -380,5 +380,125 @@ describe("review of 5b.4d — pins for the session keys and late results", () =>
     });
     await act(async () => resolveList({ ok: true, chats: [] }));
     expect(screen.queryByRole("region", { name: /saved chats/i })).toBeNull();
+  });
+});
+
+// Critic of 7e616b87 (2026-09-25, measured): a late delete acted on the state from the moment of the click, the busy
+// Delete button did not update for another chat, and two focus / alert details.
+describe("critic of 7e616b87 — late results act on the state when they LAND", () => {
+  const listed = (ids: readonly string[]) => ({ ok: true as const, chats: ids.map((id) => ({ chatId: id, title: `Title ${id}`, updatedAt: "2026-09-25T10:00:00.000Z" })) });
+
+  it("a late delete of the chat that WAS open does not replace a chat opened meanwhile", async () => {
+    let resolveDelete: (r: unknown) => void = () => {};
+    const onNewChat = vi.fn();
+    const c = controls({ chatId: "x", onNewChat, onListChats: vi.fn(async () => listed(["x", "y"])), onDeleteChat: vi.fn(() => new Promise((r) => (resolveDelete = r))) as never });
+    const view = await mount(panel({ onAsk: vi.fn(), chats: c }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete chat: Title x" }));
+    });
+    await act(async () => {
+      view.rerender(<Copilot {...panel({ onAsk: vi.fn(), chats: { ...c, chatId: "y" } })} />); // the owner opened y
+    });
+    await act(async () => resolveDelete({ ok: true, outcome: "deleted" }));
+    expect(onNewChat).not.toHaveBeenCalled();
+  });
+
+  it("a late delete of a chat REOPENED meanwhile starts a new chat — never a chat stuck on 'Loading'", async () => {
+    let resolveDelete: (r: unknown) => void = () => {};
+    const onNewChat = vi.fn();
+    const c = controls({ chatId: "y", onNewChat, onListChats: vi.fn(async () => listed(["x", "y"])), onDeleteChat: vi.fn(() => new Promise((r) => (resolveDelete = r))) as never });
+    const view = await mount(panel({ onAsk: vi.fn(), chats: c }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete chat: Title x" }));
+    });
+    await act(async () => {
+      view.rerender(<Copilot {...panel({ onAsk: vi.fn(), chats: { ...c, chatId: "x" } })} />); // the owner reopened x
+    });
+    await act(async () => resolveDelete({ ok: true, outcome: "deleted" }));
+    expect(onNewChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("a late delete does not reopen a list the owner closed, nor move focus out of the ask box", async () => {
+    let resolveDelete: (r: unknown) => void = () => {};
+    const c = controls({ onListChats: vi.fn(async () => listed(["x"])), onDeleteChat: vi.fn(() => new Promise((r) => (resolveDelete = r))) as never });
+    await mount(panel({ onAsk: vi.fn(), chats: c }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete chat: Title x" }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i })); // close the list
+    });
+    const input = screen.getByRole("textbox", { name: /ask copilot/i });
+    input.focus();
+    await act(async () => resolveDelete({ ok: true, outcome: "deleted" }));
+    expect(screen.queryByRole("region", { name: /saved chats/i })).toBeNull();
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("another chat's Delete button is enabled again as soon as its answer fails", async () => {
+    let resolveAsk: (r: AskResult) => void = () => {};
+    const c = controls({ chatId: "a", onListChats: vi.fn(async () => listed(["a", "b"])) });
+    const view = await mount(panel({ onAsk: vi.fn(() => new Promise<AskResult>((r) => (resolveAsk = r))), chats: c }));
+    await ask("in flight in a");
+    await act(async () => {
+      view.rerender(<Copilot {...panel({ onAsk: vi.fn(), chats: { ...c, chatId: "b" } })} />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    expect((screen.getByRole("button", { name: "Delete chat: Title a" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => resolveAsk({ ok: false }));
+    expect((screen.getByRole("button", { name: "Delete chat: Title a" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("an OPEN list is refreshed when an answer lands (a first answer adds the chat)", async () => {
+    let resolve: (r: AskResult) => void = () => {};
+    const onListChats = vi.fn(async () => listed([]));
+    await mount(panel({ onAsk: vi.fn(() => new Promise<AskResult>((r) => (resolve = r))), chats: controls({ onListChats }) }));
+    await ask("q");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    const before = onListChats.mock.calls.length;
+    await act(async () => resolve({ ok: true, answer: answer("A") }));
+    expect(onListChats.mock.calls.length).toBe(before + 1);
+  });
+
+  it("Try again keeps focus in the panel; a failed-delete alert is not shown again when the list is reopened", async () => {
+    let tries = 0;
+    await mount(panel({ onAsk: vi.fn(), chats: controls({ onLoadChat: async () => (tries++ === 0 ? { ok: false, notFound: false } : { ok: false, notFound: true }) }) }));
+    const retry = screen.getByRole("button", { name: /try again/i });
+    retry.focus();
+    await act(async () => {
+      fireEvent.click(retry);
+    });
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: /ask copilot/i }));
+    cleanup();
+    sessions = createChatSessionStore();
+    await mount(panel({ onAsk: vi.fn(), chats: controls({ onListChats: vi.fn(async () => listed(["x"])), onDeleteChat: async () => ({ ok: false }) }) }));
+    const toggle = screen.getByRole("button", { name: /^chats$/i });
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete chat: Title x" }));
+    });
+    expect(screen.getByRole("alert")).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

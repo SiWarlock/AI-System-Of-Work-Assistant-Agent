@@ -41,8 +41,9 @@ export interface AppShellProps {
    */
   readonly copilotWorkspaceScoped: boolean;
   /**
-   * Linear slice 5b.4d — the ACTIVE onboarded workspace's id (null under Global). The Copilot clears its transcript and
-   * draft when it changes, so nothing from one workspace is shown or sent under another (rule 4).
+   * Linear slice 5b.4d — the ACTIVE onboarded workspace's id (null under Global). The Copilot shows only this
+   * workspace's chat, draft and chat list (each kept per workspace), so nothing from one workspace is shown or sent
+   * under another (rule 4).
    */
   readonly copilotWorkspaceKey?: string | null;
   /** Linear slice 5b.4d — the saved-chat controls for the active workspace (absent ⇒ no chat list or restore). */
