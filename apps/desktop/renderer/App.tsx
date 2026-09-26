@@ -45,12 +45,31 @@ import { reroutePickerOptions } from "./lib/reroute-picker";
 import { shouldShowOnboarding, shouldBackfillMarker, type FirstRunSignal } from "./lib/first-run-gate";
 import { buildDailyBrief } from "./lib/daily-brief";
 import { seedDevStore } from "./dev/seed";
+import { newUuid } from "./lib/uuid";
+import type { CopilotChatControls } from "./surfaces/copilot/Copilot";
 
 // The renderer's single UI-safe store (app singleton — one window).
 const store = createUiSafeStore();
 
 export function App(): ReactElement {
   const liveRef = useRef<StartLiveHandle | null>(null);
+  // Linear slice 5b.4d — the Copilot's CURRENT chat, one per workspace (owner decisions 2026-09-25: chats are saved, a
+  // list per workspace). ⛔ Keyed by the real onboarded workspace id, so a chat is never shared across workspaces
+  // (rule 4). A workspace with none gets a fresh id on first use; "New chat" and opening a saved chat replace it.
+  const copilotChatIds = useRef(new Map<string, string>());
+  const [, setCopilotChatRev] = useState(0);
+  const copilotChatIdFor = (workspaceId: string): string => {
+    let id = copilotChatIds.current.get(workspaceId);
+    if (id === undefined) {
+      id = newUuid();
+      copilotChatIds.current.set(workspaceId, id);
+    }
+    return id;
+  };
+  const setCopilotChat = (workspaceId: string, chatId: string): void => {
+    copilotChatIds.current.set(workspaceId, chatId);
+    setCopilotChatRev((n) => n + 1);
+  };
   // Whether a REAL live worker handle exists (reactive — drives affordances that must be
   // disabled without a worker, e.g. the approval-decision buttons). Distinct from the
   // `connection` status: the dev-seed fallback sets connection="live" for a populated demo
@@ -158,10 +177,12 @@ export function App(): ReactElement {
   // §9.6 Copilot ask: resolve the CURRENT scope's workspaceId (fail-closed for Global / unknown) and
   // ask the worker. No single workspace or no live bridge → {ok:false}; the worker re-derives its own
   // workspace scoping + runs the WS-8 / candidate-data gates, so the renderer only requests.
+  // Linear slice 5b.4d — the ask names the workspace's CURRENT chat, so the worker reads that chat's memory and saves
+  // the answered turn to it (owner decisions 2026-09-25). The chat id is opaque; no history text is sent.
   const onAskCopilot = (question: string): Promise<AskResult> => {
     const workspaceId = resolveOnboardedWorkspaceId(state, state.scope);
     if (workspaceId === null || liveRef.current === null) return Promise.resolve({ ok: false });
-    return liveRef.current.askCopilot(workspaceId, question);
+    return liveRef.current.askCopilot(workspaceId, question, copilotChatIdFor(workspaceId));
   };
 
   // §9.8 approval decision: REQUEST the worker's exactly-once transition (mac channel). On a
@@ -362,6 +383,20 @@ export function App(): ReactElement {
   // single ONBOARDED workspace (§19.1 / 14.1). Global, a non-onboarded bucket, or an unknown
   // scope → null → the pick-a-workspace state (you can't ask an un-onboarded workspace).
   const copilotWorkspaceScoped = resolveOnboardedWorkspaceId(state, state.scope) !== null;
+  // Linear slice 5b.4d — the saved-chat controls for the ACTIVE workspace. ⛔ WS-8: each call is bound to this render's
+  // workspace id, captured here; the panel never names a workspace. No live worker ⇒ no chats (nothing to save to).
+  const chatWorkspace = activeWorkspaceId;
+  const copilotChats: CopilotChatControls | undefined =
+    chatWorkspace !== null && hasLiveWorker
+      ? {
+          chatId: copilotChatIdFor(chatWorkspace),
+          onLoadChat: (chatId) => liveRef.current?.copilotChat(chatWorkspace, chatId) ?? Promise.resolve({ ok: false, notFound: false }),
+          onListChats: () => liveRef.current?.copilotChatList(chatWorkspace) ?? Promise.resolve({ ok: false }),
+          onOpenChat: (chatId) => setCopilotChat(chatWorkspace, chatId),
+          onNewChat: () => setCopilotChat(chatWorkspace, newUuid()),
+          onDeleteChat: (chatId) => liveRef.current?.deleteCopilotChat(chatWorkspace, chatId) ?? Promise.resolve({ ok: false }),
+        }
+      : undefined;
   // Real workspaceId → { display name, subtle scope accent } (from the onboarded set) for Today's
   // Global per-workspace rows — replaces the former placeholder-id → ScopeMeta lookup.
   const workspaceMeta = new Map<string, { readonly label: string; readonly accent: string }>(
@@ -421,6 +456,8 @@ export function App(): ReactElement {
       onNavigate={onNavigate}
       onAskCopilot={onAskCopilot}
       copilotWorkspaceScoped={copilotWorkspaceScoped}
+      copilotWorkspaceKey={activeWorkspaceId}
+      {...(copilotChats !== undefined ? { copilotChats } : {})}
       pendingApprovalCount={pendingApprovalCount}
       ingestionCount={state.ingestion.length}
     >

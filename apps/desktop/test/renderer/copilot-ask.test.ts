@@ -101,3 +101,20 @@ describe("createAskCopilot — client-side re-validation (9.26)", () => {
     expect((await nullValue("ws", "q")).ok).toBe(false);
   });
 });
+
+// Linear slice 5b.4d — the ask names the chat it continues (owner decisions 2026-09-25: saved chat memory). The chat id
+// is opaque; the worker reads that chat by (workspaceId, chatId), so the renderer never sends history text.
+describe("createAskCopilot — the chat id (Linear slice 5b.4d)", () => {
+  it("sends exactly { workspaceId, question, chatId } — never any history", async () => {
+    const seen: unknown[] = [];
+    const ask = createAskCopilot(fakeClient((input) => (seen.push(input), Promise.resolve({ ok: true, value: VALID }))));
+    await ask("ws-1", "Core", "chat-1");
+    expect(seen).toEqual([{ workspaceId: "ws-1", question: "Core", chatId: "chat-1" }]);
+  });
+  it("without a chat id, sends no chatId key at all", async () => {
+    const seen: unknown[] = [];
+    const ask = createAskCopilot(fakeClient((input) => (seen.push(input), Promise.resolve({ ok: true, value: VALID }))));
+    await ask("ws-1", "q");
+    expect(seen).toEqual([{ workspaceId: "ws-1", question: "q" }]);
+  });
+});

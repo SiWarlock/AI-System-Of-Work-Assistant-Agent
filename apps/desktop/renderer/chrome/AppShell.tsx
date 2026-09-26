@@ -20,7 +20,7 @@ import { WORKSPACE_SCOPES, scopeMeta, type WorkspaceScope } from "../store/scope
 import { useRovingListbox } from "../lib/a11y/useRovingListbox";
 import type { Route } from "../store/route";
 import { accentVar } from "../lib/accent";
-import { Copilot } from "../surfaces/copilot/Copilot";
+import { Copilot, type CopilotChatControls } from "../surfaces/copilot/Copilot";
 import type { AskResult } from "../lib/copilot-ask";
 import { ErrorBoundary, ErrorFallback } from "./ErrorBoundary";
 
@@ -40,6 +40,13 @@ export interface AppShellProps {
    * state — you cannot ask an un-onboarded workspace. Computed by App from the onboarded store slice.
    */
   readonly copilotWorkspaceScoped: boolean;
+  /**
+   * Linear slice 5b.4d — the ACTIVE onboarded workspace's id (null under Global). The Copilot clears its transcript and
+   * draft when it changes, so nothing from one workspace is shown or sent under another (rule 4).
+   */
+  readonly copilotWorkspaceKey?: string | null;
+  /** Linear slice 5b.4d — the saved-chat controls for the active workspace (absent ⇒ no chat list or restore). */
+  readonly copilotChats?: CopilotChatControls;
   /** The pending-approval count (§9.8) for the Approvals nav badge; 0/undefined → no pill. */
   readonly pendingApprovalCount?: number;
   /** The active-scope ingestion-inbox count (§9.7) for the Inbox nav badge; 0/undefined → no pill. */
@@ -298,7 +305,20 @@ function NavLink({
 // ── The shell ──────────────────────────────────────────────────────────────
 
 export function AppShell(props: AppShellProps): ReactElement {
-  const { connection, scope, onScopeChange, route, onNavigate, onAskCopilot, copilotWorkspaceScoped, pendingApprovalCount, ingestionCount, children } = props;
+  const {
+    connection,
+    scope,
+    onScopeChange,
+    route,
+    onNavigate,
+    onAskCopilot,
+    copilotWorkspaceScoped,
+    copilotWorkspaceKey,
+    copilotChats,
+    pendingApprovalCount,
+    ingestionCount,
+    children,
+  } = props;
 
   // Copilot right-sidebar chrome state (§4.6): collapsed (thin rail) ⇄ expanded (chat panel).
   // Owned here like the scope switcher's local open state — orthogonal to BOTH route and scope
@@ -503,7 +523,13 @@ export function AppShell(props: AppShellProps): ReactElement {
 
         {/* ── Copilot right sidebar — collapsed (thin rail) ⇄ expanded (chat panel) ── */}
         {copilotOpen ? (
-          <Copilot workspaceScoped={copilotWorkspaceScoped} onCollapse={collapseCopilot} onAsk={onAskCopilot} />
+          <Copilot
+            workspaceScoped={copilotWorkspaceScoped}
+            onCollapse={collapseCopilot}
+            onAsk={onAskCopilot}
+            workspaceKey={copilotWorkspaceKey ?? null}
+            {...(copilotChats !== undefined ? { chats: copilotChats } : {})}
+          />
         ) : (
           <aside className="sow-copilot-rail" aria-label="Copilot (collapsed)">
             {/* Gradient sparkle icon */}

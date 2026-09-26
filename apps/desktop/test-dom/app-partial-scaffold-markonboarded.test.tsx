@@ -28,6 +28,10 @@ vi.mock("../renderer/lib/live", async (importOriginal) => {
     auditDrill: async () => ({ ok: false }),
     hydrateScope: async () => {},
     askCopilot: async () => ({ ok: false }),
+    // Linear slice 5b.4d — the saved-chat callers (unused here).
+    copilotChatList: async () => ({ ok: false }),
+    copilotChat: async () => ({ ok: false, notFound: false }),
+    deleteCopilotChat: async () => ({ ok: false }),
     // §9.8's DecisionResult now REQUIRES a closed reason on the ok:false arm. "unavailable" is the
     // honest one for a scaffold stub: this handle has no live worker behind it, which is exactly
     // the case App.tsx:177 maps to "unavailable". "already_resolved" would assert a server fact

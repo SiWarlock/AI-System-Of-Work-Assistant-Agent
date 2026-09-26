@@ -1341,6 +1341,110 @@ body {
   height: 16px;
 }
 
+/* Linear slice 5b.4d — the saved-chats toggle (header) and list (body). */
+.sow-copilot-chats-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  color: var(--label-2);
+  cursor: default;
+}
+
+.sow-copilot-chats-toggle:hover,
+.sow-copilot-chats-toggle:focus-visible,
+.sow-copilot-chats-toggle[aria-expanded="true"] {
+  background: rgba(10, 132, 255, 0.12);
+  outline: none;
+}
+
+.sow-copilot-chats-toggle svg {
+  width: 16px;
+  height: 16px;
+}
+
+.sow-copilot-chats {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sow-copilot-newchat {
+  align-self: flex-start;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 14px;
+  cursor: default;
+}
+
+.sow-copilot-chats-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--label-2);
+}
+
+.sow-copilot-chatlist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sow-copilot-chat-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sow-copilot-chat-open {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--label);
+  background: var(--card);
+  border: 0.5px solid rgba(255, 255, 255, 0.4);
+  border-radius: 10px;
+  cursor: default;
+}
+
+.sow-copilot-chat-open[aria-current="true"] {
+  border-color: rgba(10, 132, 255, 0.6);
+}
+
+.sow-copilot-chat-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--label-2);
+  cursor: default;
+}
+
+.sow-copilot-chat-delete:hover,
+.sow-copilot-chat-delete:focus-visible {
+  background: rgba(255, 69, 58, 0.14);
+  outline: none;
+}
+
+.sow-copilot-chat-delete svg {
+  width: 14px;
+  height: 14px;
+}
+
 .sow-copilot-body {
   flex: 1;
   min-height: 0;
@@ -1427,7 +1531,7 @@ body {
 /* User = filled blue, right-aligned. */
 .sow-copilot-bubble--user {
   align-self: flex-end;
-  background: var(--accent, #0a84ff);
+  background: var(--accent);
   color: #fff;
   border-bottom-right-radius: 5px;
 }
@@ -1504,7 +1608,7 @@ body {
   height: 32px;
   border-radius: 50%;
   color: #fff;
-  background: var(--accent, #0a84ff);
+  background: var(--accent);
   cursor: default;
 }
 
@@ -1740,7 +1844,7 @@ body {
 .sow-approval-details-title {
   font-size: 13.5px;
   font-weight: 600;
-  color: var(--label-1, inherit);
+  color: var(--label);
 }
 
 .sow-approval-details-line {

@@ -33,6 +33,14 @@ import { createWsStreamTransport } from "./ws-transport";
 import { createDrillDown, type DrillResult } from "./drilldown";
 import { createAuditDrill, type AuditDrillResult } from "./audit-drill";
 import { createAskCopilot, type AskResult } from "./copilot-ask";
+import {
+  createCopilotChatList,
+  createCopilotChat,
+  createDeleteCopilotChat,
+  type CopilotChatListResult,
+  type CopilotChatResult,
+  type DeleteCopilotChatResult,
+} from "./copilot-chats";
 import { createApprovalDecision, type ApprovalDecision, type DecisionResult } from "./approval-decision";
 import {
   createTriageDisposition,
@@ -83,8 +91,17 @@ export interface StartLiveHandle {
   readonly auditDrill: (workspaceId: string, changeId: string) => Promise<AuditDrillResult>;
   /** Re-hydrate for a scope (called on a scope change) — clears then re-queries, no blend. */
   readonly hydrateScope: (scope: WorkspaceScope) => Promise<void>;
-  /** Ask Copilot a question (§9.6, wired to query.copilotAsk); fails closed to {ok:false}. */
-  readonly askCopilot: (workspaceId: string, question: string) => Promise<AskResult>;
+  /**
+   * Ask Copilot a question (§9.6, wired to query.copilotAsk); fails closed to {ok:false}. Linear slice 5b.4d: `chatId`
+   * names the saved chat the ask continues (its memory is read and the answered turn saved by the worker).
+   */
+  readonly askCopilot: (workspaceId: string, question: string, chatId?: string) => Promise<AskResult>;
+  /** Linear slice 5b.4d — a workspace's saved Copilot chats (copilotChats.list); fails closed to {ok:false}. */
+  readonly copilotChatList: (workspaceId: string) => Promise<CopilotChatListResult>;
+  /** Linear slice 5b.4d — open one saved chat (copilotChats.get); `notFound` for a chat not saved in this workspace. */
+  readonly copilotChat: (workspaceId: string, chatId: string) => Promise<CopilotChatResult>;
+  /** Linear slice 5b.4d — delete one saved chat (copilotChats.remove); fails closed to {ok:false}. */
+  readonly deleteCopilotChat: (workspaceId: string, chatId: string) => Promise<DeleteCopilotChatResult>;
   /** Decide an approval (§9.8, wired to command.decideApproval, mac channel); fails closed to {ok:false}. */
   readonly decideApproval: (approvalId: string, decision: ApprovalDecision) => Promise<DecisionResult>;
   /**
@@ -205,6 +222,9 @@ export async function startLive(store: Store<UiSafeStoreState>): Promise<StartLi
     auditDrill: createAuditDrill(live.client),
     hydrateScope: (scope: WorkspaceScope): Promise<void> => hydrateScope(live.client, store, scope),
     askCopilot: createAskCopilot(live.client),
+    copilotChatList: createCopilotChatList(live.client),
+    copilotChat: createCopilotChat(live.client),
+    deleteCopilotChat: createDeleteCopilotChat(live.client),
     decideApproval: createApprovalDecision(live.client),
     disposeTriage: createTriageDisposition(live.client),
     onboardWorkspace: createOnboardWorkspace(live.client),

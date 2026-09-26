@@ -12,13 +12,17 @@ export type AskResult =
   | { readonly ok: true; readonly answer: UiSafeCopilotAnswer }
   | { readonly ok: false };
 
-/** Build the Copilot ask caller over a live tRPC client. */
+/**
+ * Build the Copilot ask caller over a live tRPC client. Linear slice 5b.4d — `chatId` names the saved chat this ask
+ * continues (the worker reads that chat's memory by (workspaceId, chatId) and saves the answered turn to it). It is an
+ * opaque id; the renderer never sends history text.
+ */
 export function createAskCopilot(
   client: CreateTRPCClient<AppRouter>,
-): (workspaceId: string, question: string) => Promise<AskResult> {
-  return async (workspaceId: string, question: string): Promise<AskResult> => {
+): (workspaceId: string, question: string, chatId?: string) => Promise<AskResult> {
+  return async (workspaceId: string, question: string, chatId?: string): Promise<AskResult> => {
     try {
-      const res = await client.query.copilotAsk.query({ workspaceId, question });
+      const res = await client.query.copilotAsk.query({ workspaceId, question, ...(chatId !== undefined ? { chatId } : {}) });
       // A typed err (WS-8 fail-closed / candidate-data gate rejection) → no answer.
       if (res.ok !== true) return { ok: false };
       // 9.26 — RE-VALIDATE the payload client-side against the SAME contract schema the worker

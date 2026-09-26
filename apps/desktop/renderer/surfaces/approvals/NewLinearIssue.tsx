@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactElement } from "react";
 import { LINEAR_DESCRIPTION_MAX, type UiSafeLinearTeamList } from "@sow/contracts/api/ui-safe";
 import type { LinearIssueDraft, LinearTeamsResult, ProposeLinearIssueResult } from "../../lib/linear-issue";
+import { newUuid } from "../../lib/uuid";
 
 /** The same bounds the worker enforces (apps/worker/src/api/procedures/linearIssue.ts); the description's is shared
  *  through the contract so the two cannot drift (slice 5b.1, owner: ~250 lines). */
@@ -38,15 +39,7 @@ const FAILED = "Couldn't create the proposal — try again";
  * none — two real issues may share a title — so the draft id is minted ONCE per draft and kept for every retry, which
  * gives L6's guarantee. A fresh id per CLICK would break it; this is not that.
  */
-function newDraftId(): string {
-  const c = globalThis.crypto;
-  if (typeof c.randomUUID === "function") return c.randomUUID();
-  const b = c.getRandomValues(new Uint8Array(16));
-  b[6] = ((b[6] ?? 0) & 0x0f) | 0x40;
-  b[8] = ((b[8] ?? 0) & 0x3f) | 0x80;
-  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
+const newDraftId = newUuid;
 
 type Teams = { readonly kind: "loading" } | { readonly kind: "failed" } | { readonly kind: "loaded"; readonly list: UiSafeLinearTeamList };
 
