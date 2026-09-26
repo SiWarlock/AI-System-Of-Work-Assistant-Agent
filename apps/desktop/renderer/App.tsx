@@ -46,7 +46,7 @@ import { shouldShowOnboarding, shouldBackfillMarker, type FirstRunSignal } from 
 import { buildDailyBrief } from "./lib/daily-brief";
 import { seedDevStore } from "./dev/seed";
 import { newUuid } from "./lib/uuid";
-import type { CopilotChatControls } from "./surfaces/copilot/Copilot";
+import { createChatSessionStore, type ChatSessionStore, type CopilotChatControls } from "./surfaces/copilot/Copilot";
 
 // The renderer's single UI-safe store (app singleton — one window).
 const store = createUiSafeStore();
@@ -55,8 +55,13 @@ export function App(): ReactElement {
   const liveRef = useRef<StartLiveHandle | null>(null);
   // Linear slice 5b.4d — the Copilot's CURRENT chat, one per workspace (owner decisions 2026-09-25: chats are saved, a
   // list per workspace). ⛔ Keyed by the real onboarded workspace id, so a chat is never shared across workspaces
-  // (rule 4). A workspace with none gets a fresh id on first use; "New chat" and opening a saved chat replace it.
+  // (rule 4). A workspace with none gets a fresh id the first time it is rendered with a live worker (the panel then
+  // restores it: not saved yet ⇒ it opens empty); "New chat" and opening a saved chat replace it.
   const copilotChatIds = useRef(new Map<string, string>());
+  // The chats' in-app sessions (turns, an in-flight answer, the restore state), kept for the whole app session so they
+  // survive the panel collapsing and a scope switch and back (review of 5b.4d). Keyed by (workspace, chat).
+  const copilotSessions = useRef<ChatSessionStore | null>(null);
+  if (copilotSessions.current === null) copilotSessions.current = createChatSessionStore();
   const [, setCopilotChatRev] = useState(0);
   const copilotChatIdFor = (workspaceId: string): string => {
     let id = copilotChatIds.current.get(workspaceId);
@@ -395,6 +400,7 @@ export function App(): ReactElement {
           onOpenChat: (chatId) => setCopilotChat(chatWorkspace, chatId),
           onNewChat: () => setCopilotChat(chatWorkspace, newUuid()),
           onDeleteChat: (chatId) => liveRef.current?.deleteCopilotChat(chatWorkspace, chatId) ?? Promise.resolve({ ok: false }),
+          sessions: copilotSessions.current,
         }
       : undefined;
   // Real workspaceId → { display name, subtle scope accent } (from the onboarded set) for Today's

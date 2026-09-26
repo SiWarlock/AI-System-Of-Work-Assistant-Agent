@@ -16,9 +16,12 @@ type UiSafeStore = Store<UiSafeStoreState>;
 const LIFE = "wk-life-3";
 const EMP = "wk-emp-7";
 
-const { asks, storeRef, loads } = vi.hoisted(() => ({
+const { asks, storeRef, loads, lists, deletes, gate } = vi.hoisted(() => ({
   asks: [] as { workspaceId: string; question: string; chatId: string | undefined }[],
   loads: [] as { workspaceId: string; chatId: string }[],
+  lists: [] as string[],
+  deletes: [] as { workspaceId: string; chatId: string }[],
+  gate: { hold: null as null | Promise<void> },
   storeRef: { current: null as unknown },
 }));
 
@@ -30,11 +33,12 @@ vi.mock("../renderer/lib/live", async (importOriginal) => {
     hydrateScope: async () => {},
     askCopilot: async (workspaceId: string, question: string, chatId?: string) => {
       asks.push({ workspaceId, question, chatId });
+      if (gate.hold !== null) await gate.hold;
       return { ok: true, answer: { answer: [`ANSWER TO ${question}`], citations: [] } };
     },
     copilotChat: async (workspaceId: string, chatId: string) => (loads.push({ workspaceId, chatId }), { ok: false, notFound: true }),
-    copilotChatList: async () => ({ ok: true, chats: [] }),
-    deleteCopilotChat: async () => ({ ok: false }),
+    copilotChatList: async (workspaceId: string) => (lists.push(workspaceId), { ok: true, chats: [{ chatId: `listed-${workspaceId}`, title: `Chat of ${workspaceId}`, updatedAt: "2026-09-25T10:00:00.000Z" }] }),
+    deleteCopilotChat: async (workspaceId: string, chatId: string) => (deletes.push({ workspaceId, chatId }), { ok: true, outcome: "deleted" }),
     unsentApprovals: async () => ({ ok: true, approvals: [] }),
   } as unknown as StartLiveHandle;
   return {
@@ -74,6 +78,9 @@ async function ask(text: string): Promise<void> {
 beforeEach(() => {
   asks.length = 0;
   loads.length = 0;
+  lists.length = 0;
+  deletes.length = 0;
+  gate.hold = null;
   (window as unknown as { sow?: unknown }).sow = {
     app: { getVersion: async () => "0.0.0" },
     session: { getToken: async () => "tok" },
@@ -142,5 +149,60 @@ describe("App — the Copilot's saved chats", () => {
     await ask("after");
     expect(asks[1]?.chatId).not.toBe(asks[0]?.chatId);
     expect(asks.every((a) => a.workspaceId === EMP)).toBe(true);
+  });
+});
+
+describe("App — review of 5b.4d (2026-09-25)", () => {
+  it("⛔ rule 4 — text typed under one workspace is not in the ask box after a switch (through the real App)", async () => {
+    await openCopilot();
+    fireEvent.change(screen.getByRole("textbox", { name: /ask copilot/i }), { target: { value: "half-typed employer text" } });
+    await switchTo("personal-life");
+    expect((screen.getByRole("textbox", { name: /ask copilot/i }) as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("⛔ WS-8 — the chat list and a delete are asked about the ACTIVE workspace's id (never the scope name)", async () => {
+    await openCopilot();
+    await switchTo("personal-life");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(lists).toEqual([LIFE]);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: `Delete chat: Chat of ${LIFE}` }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(deletes).toEqual([{ workspaceId: LIFE, chatId: `listed-${LIFE}` }]);
+  });
+
+  it("⛔ rule 4 — the very first render after a switch (made OUTSIDE act, as in the app) shows no employer turn", async () => {
+    await openCopilot();
+    await ask("employer question");
+    store().dispatch((s) => setScope(s, "personal-life"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(screen.queryByText("ANSWER TO employer question")).toBeNull();
+    expect(screen.queryByText("employer question")).toBeNull();
+    await tick();
+  });
+
+  it("an answer that lands while the panel is collapsed is there when it is opened again", async () => {
+    let release: () => void = () => {};
+    gate.hold = new Promise<void>((r) => (release = r));
+    await openCopilot();
+    await ask("slow question");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /collapse copilot sidebar/i }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await act(async () => {
+      release();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /expand copilot sidebar/i }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(screen.getByText("ANSWER TO slow question")).toBeTruthy();
   });
 });

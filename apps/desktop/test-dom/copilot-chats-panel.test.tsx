@@ -7,9 +7,9 @@
 //     transcript survived a switch — measured by the 5b.4 grounding, 2026-09-25.)
 //   ⛔ Task 9.25: a RESTORED turn goes through `admitReply` like a live one, so its egress notice comes back with it.
 //   • A new chat (not saved yet) opens empty, without an error; a failed load says so.
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, cleanup, fireEvent, act, type RenderResult } from "@testing-library/react";
-import { Copilot, type CopilotProps, type CopilotChatControls } from "../renderer/surfaces/copilot/Copilot";
+import { Copilot, createChatSessionStore, type CopilotProps, type CopilotChatControls, type ChatSessionStore } from "../renderer/surfaces/copilot/Copilot";
 import type { AskResult } from "../renderer/lib/copilot-ask";
 import type { CopilotChatResult } from "../renderer/lib/copilot-chats";
 
@@ -19,8 +19,14 @@ const EMP = "wk-emp-7";
 const LIFE = "wk-life-3";
 const answer = (text: string, egress?: string) => ({ answer: [text], citations: [], ...(egress !== undefined ? { egressProcessor: egress } : {}) });
 
+/** One session store per test — App keeps ONE for the whole app session, shared by every workspace's controls. */
+let sessions: ChatSessionStore = createChatSessionStore();
+beforeEach(() => {
+  sessions = createChatSessionStore();
+});
 function controls(over: Partial<CopilotChatControls> = {}): CopilotChatControls {
   return {
+    sessions,
     chatId: "chat-1",
     onLoadChat: vi.fn(async (): Promise<CopilotChatResult> => ({ ok: false, notFound: true })),
     onListChats: vi.fn(async () => ({ ok: true as const, chats: [] })),
@@ -99,16 +105,23 @@ describe("restore — a saved chat comes back when the panel opens (9.25)", () =
     expect(document.querySelector(".sow-copilot-egress-notice")?.textContent).toContain("claude");
   });
 
-  it("the composer waits while a chat loads, so a restore can never overwrite a turn asked meanwhile", async () => {
+  it("Send waits while a chat loads (the input stays enabled, so focus is kept), then works", async () => {
     let finish: (r: CopilotChatResult) => void = () => {};
     const onLoadChat = vi.fn(() => new Promise<CopilotChatResult>((r) => (finish = r)));
+    const onAsk = vi.fn(async (): Promise<AskResult> => ({ ok: true, answer: answer("A") }));
     await act(async () => {
-      render(<Copilot {...panel({ onAsk: vi.fn(), chats: controls({ onLoadChat }) })} />);
+      render(<Copilot {...panel({ onAsk, chats: controls({ onLoadChat }) })} />);
     });
-    expect((screen.getByRole("textbox", { name: /ask copilot/i }) as HTMLTextAreaElement).disabled).toBe(true);
+    const input = screen.getByRole("textbox", { name: /ask copilot/i }) as HTMLTextAreaElement;
+    expect(input.disabled).toBe(false);
+    expect(document.activeElement).toBe(input); // review of 5b.4d: a disabled input dropped focus to <body>
     expect(screen.getByText(/loading this chat/i)).toBeTruthy();
+    fireEvent.change(input, { target: { value: "too early" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onAsk).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: /^send$/i }) as HTMLButtonElement).disabled).toBe(true);
     await act(async () => finish({ ok: false, notFound: true }));
-    expect((screen.getByRole("textbox", { name: /ask copilot/i }) as HTMLTextAreaElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: /^send$/i }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("a new chat (not saved yet) opens empty, with no error", async () => {
@@ -177,5 +190,195 @@ describe("the chat list — open, start and delete chats", () => {
       fireEvent.click(screen.getByRole("button", { name: "Delete chat: Login loop" }));
     });
     expect(c.onNewChat).toHaveBeenCalled(); // chat-1 was the open chat
+  });
+});
+
+// Review of 5b.4d (2026-09-25) — the panel renders each chat's SESSION from App's store (keyed by workspace + chat), so
+// nothing is reset after a switch, and an answer in flight is never lost or shown anywhere else.
+describe("review of 5b.4d — sessions, not per-view state", () => {
+  it("⛔ 9.25 — a restored answer WITHOUT an egress notice shows none (no over-disclosure)", async () => {
+    const onLoadChat = vi.fn(async (): Promise<CopilotChatResult> => ({
+      ok: true,
+      chat: { chatId: "chat-1", title: "t", truncated: false, turns: [{ question: "q", answer: answer("A personal answer.") }] },
+    }));
+    await mount(panel({ onAsk: vi.fn(), chats: controls({ onLoadChat }) }));
+    expect(screen.getByText("A personal answer.")).toBeTruthy();
+    expect(document.querySelector(".sow-copilot-egress-notice")).toBeNull();
+  });
+
+  it("⛔ rule 4 — the open chat list belongs to its workspace: it is gone after a switch, titles and all", async () => {
+    const c = controls({ onListChats: vi.fn(async () => ({ ok: true as const, chats: [{ chatId: "e1", title: "EMPLOYER TITLE", updatedAt: "2026-09-25T10:00:00.000Z" }] })) });
+    const view = await mount(panel({ onAsk: vi.fn(), chats: c }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    expect(screen.getByText("EMPLOYER TITLE")).toBeTruthy();
+    await act(async () => {
+      view.rerender(<Copilot {...panel({ onAsk: vi.fn(), workspaceKey: LIFE, chats: { ...c, chatId: "chat-life" } })} />);
+    });
+    expect(screen.queryByText("EMPLOYER TITLE")).toBeNull();
+  });
+
+  it("an answer in flight survives a switch AWAY and BACK: 'Thinking…' returns, a second ask waits, the answer shows once", async () => {
+    let resolve: (r: AskResult) => void = () => {};
+    const onAsk = vi.fn(() => new Promise<AskResult>((r) => (resolve = r)));
+    const emp = controls();
+    const view = await mount(panel({ onAsk, chats: emp }));
+    await ask("slow question");
+    await act(async () => {
+      view.rerender(<Copilot {...panel({ onAsk, workspaceKey: LIFE, chats: { ...emp, chatId: "chat-life" } })} />);
+    });
+    expect(screen.queryByText(/thinking/i)).toBeNull();
+    await act(async () => {
+      view.rerender(<Copilot {...panel({ onAsk, chats: emp })} />);
+    });
+    expect(screen.getByText(/thinking/i)).toBeTruthy();
+    await ask("second question");
+    const input = screen.getByRole("textbox", { name: /ask copilot/i });
+    fireEvent.change(input, { target: { value: "second by Enter" } });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: "Enter" });
+    });
+    expect(onAsk).toHaveBeenCalledTimes(1);
+    await act(async () => resolve({ ok: true, answer: answer("SLOW ANSWER") }));
+    expect(screen.getAllByText("SLOW ANSWER")).toHaveLength(1);
+  });
+
+  it("an answer in flight survives the panel COLLAPSING: it shows when the panel is opened again", async () => {
+    let resolve: (r: AskResult) => void = () => {};
+    const onAsk = vi.fn(() => new Promise<AskResult>((r) => (resolve = r)));
+    const c = controls();
+    const view = await mount(panel({ onAsk, chats: c }));
+    await ask("slow question");
+    view.unmount();
+    await act(async () => resolve({ ok: true, answer: answer("ANSWER WHILE CLOSED") }));
+    await mount(panel({ onAsk, chats: c }));
+    expect(screen.getByText("ANSWER WHILE CLOSED")).toBeTruthy();
+  });
+
+  it("a failed ask in a saved chat is an explicit failure turn (9.24), never silent", async () => {
+    await mount(panel({ onAsk: vi.fn(async (): Promise<AskResult> => ({ ok: false })), chats: controls() }));
+    await ask("will fail");
+    expect(screen.getByText(/couldn.t answer that/i)).toBeTruthy();
+  });
+
+  it("a chat with an answer in flight cannot be deleted (the worker would save the answer and bring it back)", async () => {
+    const c = controls({ onListChats: vi.fn(async () => ({ ok: true as const, chats: [{ chatId: "chat-1", title: "Busy chat", updatedAt: "2026-09-25T10:00:00.000Z" }] })) });
+    await mount(panel({ onAsk: vi.fn(() => new Promise<AskResult>(() => {})), chats: c }));
+    await ask("in flight");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    expect((screen.getByRole("button", { name: "Delete chat: Busy chat" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("a failed delete says so; a late delete after a switch touches nothing under the new workspace", async () => {
+    let resolveDelete: (r: { ok: false }) => void = () => {};
+    const c = controls({
+      onListChats: vi.fn(async () => ({ ok: true as const, chats: [{ chatId: "x", title: "Other chat", updatedAt: "2026-09-25T10:00:00.000Z" }] })),
+      onDeleteChat: vi.fn(() => new Promise<{ ok: false }>((r) => (resolveDelete = r))),
+    });
+    const view = await mount(panel({ onAsk: vi.fn(), chats: c }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete chat: Other chat" }));
+    });
+    await act(async () => resolveDelete({ ok: false }));
+    expect(screen.getByRole("alert").textContent).toMatch(/could not delete/i);
+    // Now a slow delete that lands after a switch.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Delete chat: Other chat" }));
+    });
+    await act(async () => {
+      view.rerender(<Copilot {...panel({ onAsk: vi.fn(), workspaceKey: LIFE, chats: { ...c, chatId: "chat-life" } })} />);
+    });
+    const listCalls = (c.onListChats as ReturnType<typeof vi.fn>).mock.calls.length;
+    await act(async () => (resolveDelete as unknown as (r: unknown) => void)({ ok: true, outcome: "deleted" }));
+    expect((c.onListChats as ReturnType<typeof vi.fn>).mock.calls.length).toBe(listCalls); // no refresh of the old list
+    expect(screen.queryByText(/loading chats/i)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("closing the list while an answer is on its way keeps it closed; an open list is refreshed when the answer lands", async () => {
+    let resolve: (r: AskResult) => void = () => {};
+    const c = controls({ onListChats: vi.fn(async () => ({ ok: true as const, chats: [] })) });
+    await mount(panel({ onAsk: vi.fn(() => new Promise<AskResult>((r) => (resolve = r))), chats: c }));
+    await ask("q");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    await act(async () => resolve({ ok: true, answer: answer("A") }));
+    expect(screen.queryByRole("region", { name: /saved chats/i })).toBeNull();
+  });
+
+  it("New chat and opening a chat put the focus in the ask box", async () => {
+    const c = controls({ onListChats: vi.fn(async () => ({ ok: true as const, chats: [] })) });
+    await mount(panel({ onAsk: vi.fn(), chats: c }));
+    const toggle = screen.getByRole("button", { name: /^chats$/i });
+    await act(async () => {
+      fireEvent.click(toggle);
+    });
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle.getAttribute("aria-controls")).toBe(screen.getByRole("region", { name: /saved chats/i }).id);
+    expect(screen.getByText(/saved on this mac, for this workspace only/i)).toBeTruthy();
+    const newChat = screen.getByRole("button", { name: /new chat/i });
+    newChat.focus();
+    await act(async () => {
+      fireEvent.click(newChat);
+    });
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: /ask copilot/i }));
+  });
+
+  it("a restored chat that holds older turns says so; a failed restore offers Try again and Send waits", async () => {
+    await mount(
+      panel({
+        onAsk: vi.fn(),
+        chats: controls({ onLoadChat: async () => ({ ok: true, chat: { chatId: "chat-1", title: "t", truncated: true, turns: [{ question: "q", answer: answer("a") }] } }) }),
+      }),
+    );
+    expect(screen.getByText(/older messages in this chat are not shown/i)).toBeTruthy();
+    cleanup();
+    sessions = createChatSessionStore();
+    let tries = 0;
+    await mount(panel({ onAsk: vi.fn(), chats: controls({ onLoadChat: async () => (tries++ === 0 ? { ok: false, notFound: false } : { ok: false, notFound: true }) }) }));
+    expect(screen.getByText(/could not load this chat/i)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /^send$/i }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    });
+    expect(screen.queryByText(/could not load this chat/i)).toBeNull();
+    expect(tries).toBe(2);
+  });
+});
+
+describe("review of 5b.4d — pins for the session keys and late results", () => {
+  it("⛔ rule 4 — a session is (workspace, chat): the SAME chat id under another workspace shows none of the first's turns", async () => {
+    const onAsk = vi.fn(async (): Promise<AskResult> => ({ ok: true, answer: answer("FIRST WORKSPACE ANSWER") }));
+    const c = controls({ chatId: "same-id" });
+    const view = await mount(panel({ onAsk, chats: c }));
+    await ask("first workspace question");
+    await act(async () => {
+      view.rerender(<Copilot {...panel({ onAsk, workspaceKey: LIFE, chats: c })} />);
+    });
+    expect(screen.queryByText("FIRST WORKSPACE ANSWER")).toBeNull();
+  });
+
+  it("a list result that lands after the list was closed does not reopen it", async () => {
+    let resolveList: (r: { ok: true; chats: [] }) => void = () => {};
+    const c = controls({ onListChats: vi.fn(() => new Promise<{ ok: true; chats: [] }>((r) => (resolveList = r))) });
+    await mount(panel({ onAsk: vi.fn(), chats: c }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^chats$/i }));
+    });
+    await act(async () => resolveList({ ok: true, chats: [] }));
+    expect(screen.queryByRole("region", { name: /saved chats/i })).toBeNull();
   });
 });

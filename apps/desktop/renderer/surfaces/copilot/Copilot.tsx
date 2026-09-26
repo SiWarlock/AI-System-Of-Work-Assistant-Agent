@@ -4,11 +4,12 @@
 // a blue send circle. Collapsible to a thin rail, expandable — NOT a separate nav page").
 //
 // This is the EXPANDED panel. AppShell owns the collapsed⇄expanded chrome state and renders this
-// only when expanded (the 36px rail is the collapsed form). The panel is orthogonal to BOTH the
-// route (which surface is mounted) and the scope (which workspace's data hydrates) — it overlays
-// the current surface on every screen.
+// only when expanded (the 36px rail is the collapsed form). The panel overlays the current surface on
+// every screen (orthogonal to the route); its CONTENT follows the scope — it shows the active
+// workspace's current chat only (Linear slice 5b.4d, below).
 //
-// Load-bearing (§4.6): Copilot READS ONLY. It never writes or sends. Any action becomes a PROPOSAL
+// Load-bearing (§4.6): Copilot READS ONLY. It never changes the owner's notes or sends anything (its one local
+// write is the saved chat, 5b.4). Any action becomes a PROPOSAL
 // that routes to Approvals — surfaced by the persistent reminder. (9.40: the per-turn proposal-row
 // affordance was deleted — `UiSafeCopilotAnswer` cannot carry an approval id for any producer that
 // could exist — and the goal is re-tracked as a separate task rather than implemented here.)
@@ -29,15 +30,18 @@
 // not close.
 //
 // Linear slice 5b.4d — SAVED CHATS (owner decisions 2026-09-25: saved in the local store, a list of chats per
-// workspace). App keeps one chat id per workspace and passes the ACTIVE one; the panel shows only that chat.
-// ⛔ Rule 4: when the workspace or the chat changes, the transcript is cleared and that chat is restored from the worker;
-// an answer that arrives after the switch is dropped, never shown under another workspace. ⛔ Task 9.25: a restored
-// turn is re-admitted through `admitReply` and rendered by `CopilotAnswerView`, like a live one, so its egress notice
-// renders (the worker already refused a saved answer whose explicit disclosure is missing or disagrees).
+// workspace). App keeps one chat id per workspace and a `ChatSessionStore` of chat sessions keyed by (workspace, chat),
+// for the whole app session; the panel renders the ACTIVE (workspace, chat)'s session straight from that store.
+// ⛔ Rule 4: nothing per-view is reset after a switch (review of 5b.4d: a reset in an effect left one frame of the old
+// workspace's chat under the new scope) — the render itself reads only the active workspace's session, draft and chat
+// list. An answer goes into ITS chat's session, so it survives a collapse or a switch and back, and never shows
+// elsewhere. ⛔ Task 9.25: a restored turn is re-admitted through `admitReply` and rendered by `CopilotAnswerView`, like
+// a live one, so its egress notice renders (the worker already refused a saved answer whose explicit disclosure is
+// missing or disagrees).
 //
 // NEVER import electron, node, or @sow/worker from a renderer file.
 
-import { useEffect, useId, useRef, useState, type ReactElement } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactElement } from "react";
 import { UiSafeCopilotAnswerSchema, type UiSafeCopilotAnswer, type UiSafeCopilotChatSummary } from "@sow/contracts/api/ui-safe";
 import type { AskResult } from "../../lib/copilot-ask";
 import type { CopilotChatListResult, CopilotChatResult, DeleteCopilotChatResult } from "../../lib/copilot-chats";
@@ -100,6 +104,8 @@ export interface CopilotChatControls {
   readonly onNewChat: () => void;
   /** Delete a saved chat and all its turns. */
   readonly onDeleteChat: (chatId: string) => Promise<DeleteCopilotChatResult>;
+  /** The chat sessions App keeps for the app session (see {@link ChatSessionStore}). */
+  readonly sessions: ChatSessionStore;
 }
 
 export interface CopilotProps {
@@ -281,88 +287,109 @@ function Composer({
   );
 }
 
+/** One chat's in-app state. App keeps a {@link ChatSessionStore} for the whole app session, so a chat's turns and
+ *  its in-flight answer survive a collapse, a scope switch and a switch back (review of 5b.4d, 2026-09-25). */
+export interface ChatSession {
+  readonly turns: readonly CopilotTurnView[];
+  /** An ask is in flight for this chat. */
+  readonly pending: boolean;
+  /** "loading": the saved chat is being restored; "failed": it could not be; "ready": ask away. */
+  readonly status: "loading" | "ready" | "failed";
+  /** The restored chat holds older turns than these. */
+  readonly truncated: boolean;
+}
+
+/** The chat sessions, keyed by {@link chatSessionKey}. A tiny external store (`useSyncExternalStore`). */
+export interface ChatSessionStore {
+  readonly get: (key: string) => ChatSession | undefined;
+  readonly update: (key: string, fn: (s: ChatSession | undefined) => ChatSession) => void;
+  readonly remove: (key: string) => void;
+  readonly subscribe: (listener: () => void) => () => void;
+}
+
+export function createChatSessionStore(): ChatSessionStore {
+  const sessions = new Map<string, ChatSession>();
+  const listeners = new Set<() => void>();
+  const emit = (): void => {
+    for (const l of [...listeners]) l();
+  };
+  return {
+    get: (key) => sessions.get(key),
+    update: (key, fn) => {
+      sessions.set(key, fn(sessions.get(key)));
+      emit();
+    },
+    remove: (key) => {
+      if (sessions.delete(key)) emit();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+/** ⛔ Rule 4: a session is ONE workspace's chat — keyed by (workspace, chat), never by the chat id alone. */
+export function chatSessionKey(workspaceKey: string | null, chatId: string | null): string {
+  return JSON.stringify([workspaceKey, chatId]);
+}
+
+const READY: ChatSession = { turns: [], pending: false, status: "ready", truncated: false };
+const LOADING: ChatSession = { turns: [], pending: false, status: "loading", truncated: false };
+
+/** Live-turn ids — unique across the app (a restored turn's id carries its chat). */
+let askSeq = 0;
+
+/** A live answer as a turn — through `admitReply`, the sole minter; a failed ask is an explicit failure turn (9.24). */
+function turnFromResult(question: string, result: AskResult): CopilotTurnView {
+  askSeq += 1;
+  const id = `ask-${String(askSeq)}`;
+  try {
+    // 9.28 — the validated answer is carried VERBATIM: no field-by-field re-map, so there is no mapping in which a
+    // rule-5 egress disclosure can be forgotten. `admitReply` gates this path — see its docblock.
+    return result.ok ? { id, question, reply: admitReply(result.answer) } : { id, question, reply: ADMITTED_FAILED_REPLY };
+  } catch {
+    return { id, question, reply: ADMITTED_FAILED_REPLY };
+  }
+}
+
+type ListView = { readonly workspace: string | null; readonly list: ChatList };
+const CLOSED: ChatList = { kind: "closed" };
+
 export function Copilot(props: CopilotProps): ReactElement {
   const { workspaceScoped, onCollapse, onAsk, workspaceKey = null, chats } = props;
   const live = onAsk !== undefined;
-  const chatId = chats?.chatId;
-  // The VIEW this transcript belongs to: the active workspace's current chat. Every async result is checked against
-  // it, so a result from another view is dropped (rule 4).
-  const view = JSON.stringify([workspaceKey, chatId ?? null]);
-  const viewRef = useRef(view);
-  viewRef.current = view;
+  const chatId = chats?.chatId ?? null;
 
-  // 9.39 — no seed door: turn state starts EMPTY and is filled only through `admitReply` — by a live answer, or by a
-  // saved chat restored from the worker (Linear slice 5b.4d, the 9.25 restore producer).
-  const [turns, setTurns] = useState<readonly CopilotTurnView[]>([]);
-  const [draft, setDraft] = useState("");
-  const [pending, setPending] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [loadFailed, setLoadFailed] = useState(false);
-  const [list, setList] = useState<ChatList>({ kind: "closed" });
+  // The sessions: App's store when there are saved chats; otherwise this panel's own (an unsaved transcript, still
+  // one per workspace). ⛔ Rule 4: what renders is read FROM THE STORE for THIS render's (workspace, chat) — there is
+  // no per-view state to reset after a switch, so no frame can show another workspace's chat.
+  const ownStore = useRef<ChatSessionStore | null>(null);
+  if (ownStore.current === null) ownStore.current = createChatSessionStore();
+  const store = chats?.sessions ?? ownStore.current;
+  const key = chatSessionKey(workspaceKey, chatId);
+  const stored = useSyncExternalStore(store.subscribe, () => store.get(key));
+  const session: ChatSession = stored ?? (chats !== undefined ? LOADING : READY);
+  const { turns, pending, status, truncated } = session;
+
+  // The draft and the chat list belong to a WORKSPACE: read only when the workspace matches (derived, not reset by an
+  // effect — rule 4), so text typed or titles listed under one workspace never show or act under another.
+  const [draft, setDraftState] = useState<{ readonly workspace: string | null; readonly text: string }>({ workspace: workspaceKey, text: "" });
+  const draftText = draft.workspace === workspaceKey ? draft.text : "";
+  const setDraft = (text: string): void => setDraftState({ workspace: workspaceKey, text });
+  const [listView, setListView] = useState<ListView>({ workspace: workspaceKey, list: CLOSED });
+  const list: ChatList = listView.workspace === workspaceKey ? listView.list : CLOSED;
+  const [deleteFailed, setDeleteFailed] = useState<{ readonly workspace: string | null; readonly chatId: string } | null>(null);
+  const workspaceRef = useRef(workspaceKey);
+  workspaceRef.current = workspaceKey;
+  const listOpenRef = useRef(false);
+  listOpenRef.current = list.kind !== "closed";
   const listId = useId();
-  const turnSeq = useRef(0);
-
-  // ⛔ Rule 4: a new view clears the transcript and restores that chat. While it loads, the composer waits, so a
-  // restored chat can never overwrite a turn asked meanwhile.
-  useEffect(() => {
-    setTurns([]);
-    setPending(false);
-    setLoadFailed(false);
-    setList({ kind: "closed" });
-    if (chats === undefined || chatId === undefined) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const mine = view;
-    void chats.onLoadChat(chatId).then(
-      (r) => {
-        if (viewRef.current !== mine) return;
-        setLoading(false);
-        // ⛔ 9.25: each restored answer is re-admitted — the egress notice renders exactly as on a live answer.
-        if (r.ok) setTurns(r.chat.turns.map((t, i) => ({ id: `saved-${String(i)}`, question: t.question, reply: admitReply(t.answer) })));
-        else if (!r.notFound) setLoadFailed(true);
-      },
-      () => {
-        if (viewRef.current !== mine) return;
-        setLoading(false);
-        setLoadFailed(true);
-      },
-    );
-    // `view` captures the workspace and the chat; the controls object is new on every render, so it is not a dependency.
-  }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ⛔ Rule 4: text typed in one workspace is never sent under another.
-  useEffect(() => {
-    setDraft("");
-  }, [workspaceKey]);
-
-  const refreshList = (): void => {
-    if (chats === undefined) return;
-    const mine = view;
-    setList({ kind: "loading" });
-    void chats.onListChats().then(
-      (r) => {
-        if (viewRef.current === mine) setList(r.ok ? { kind: "loaded", chats: r.chats } : { kind: "failed" });
-      },
-      () => {
-        if (viewRef.current === mine) setList({ kind: "failed" });
-      },
-    );
-  };
-  const toggleList = (): void => {
-    if (list.kind === "closed") refreshList();
-    else setList({ kind: "closed" });
-  };
-  const deleteChat = (id: string): void => {
-    if (chats === undefined) return;
-    void chats.onDeleteChat(id).then((r) => {
-      if (r.ok && id === chatId) chats.onNewChat(); // the open chat is gone — start a new one
-      else refreshList();
-    });
-  };
 
   const collapseRef = useRef<HTMLButtonElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Disclosure focus management: expanding is a subtree swap (the rail's Expand button unmounts), so
@@ -370,6 +397,7 @@ export function Copilot(props: CopilotProps): ReactElement {
   // user expand (AppShell renders it only when open, Copilot starts collapsed), so focusing on mount
   // never steals focus on initial app load. When live, the ASK INPUT is the natural on-open target;
   // otherwise the Collapse control. The mirror half (return focus to the rail on collapse) is AppShell's.
+  // (The input is never disabled while a chat loads — only Send waits — so this focus holds.)
   useEffect(() => {
     if (live && inputRef.current !== null) inputRef.current.focus();
     else collapseRef.current?.focus();
@@ -381,40 +409,88 @@ export function Copilot(props: CopilotProps): ReactElement {
   // the pick-a-workspace state, never a cross-workspace blend. (The worker re-derives its own
   // workspace scoping; this only gates the UI affordance.)
 
-  const submit = (): void => {
-    const q = draft.trim();
-    if (q === "" || onAsk === undefined || pending || loading) return;
-    setDraft("");
-    setPending(true);
-    const asked = view;
-    // `finish` ALWAYS resets `pending` and appends exactly one turn — for a resolve, a rejection, OR
-    // a contract-violating ok-payload (defensive: the worker gates the answer, but if a malformed
-    // `{ok:true}` ever reached here, building the turn would throw and leave the composer stuck
-    // disabled). A failed/malformed ask folds to a safe, generic error turn — NEVER a partial/raw
-    // answer. Live-turn ids use an `ask-` prefix and are unique within a mount (`turnSeq` is monotonic).
-    const finish = (result: AskResult): void => {
-      // ⛔ Rule 4: an answer for another view (the workspace or the chat changed meanwhile) is never shown here.
-      if (viewRef.current !== asked) return;
-      turnSeq.current += 1;
-      const id = `ask-${String(turnSeq.current)}`;
-      let turn: CopilotTurnView;
-      try {
-        // 9.28 — the validated answer is carried VERBATIM: no field-by-field re-map, so there is no
-        // mapping in which a rule-5 egress disclosure can be forgotten. `admitReply` gates this
-        // path — see its docblock for why the gate stays even with a render-time boundary in place.
-        turn = result.ok
-          ? { id, question: q, reply: admitReply(result.answer) }
-          : { id, question: q, reply: ADMITTED_FAILED_REPLY };
-      } catch {
-        turn = { id, question: q, reply: ADMITTED_FAILED_REPLY };
+  /** Restore a saved chat into its session — once per chat per app session (the store keeps it after that). */
+  const load = (): void => {
+    if (chats === undefined || chatId === null) return;
+    const k = key;
+    const id = chatId;
+    store.update(k, (s) => ({ ...(s ?? READY), status: "loading" }));
+    void chats.onLoadChat(id).then(
+      (r) =>
+        store.update(k, (s) => {
+          const base = s ?? READY;
+          if (!r.ok) return { ...base, status: r.notFound ? "ready" : "failed" };
+          // ⛔ 9.25: each restored answer is re-admitted — its egress notice renders exactly as on a live answer.
+          const restored = r.chat.turns.map((t, i): CopilotTurnView => ({ id: `saved-${id}-${String(i)}`, question: t.question, reply: admitReply(t.answer) }));
+          return { ...base, status: "ready", truncated: r.chat.truncated, turns: [...restored, ...base.turns] };
+        }),
+      () => store.update(k, (s) => ({ ...(s ?? READY), status: "failed" })),
+    );
+  };
+  // A chat with no session yet is restored (StrictMode-safe: `load` records "loading" before it asks).
+  useEffect(() => {
+    if (chats !== undefined && chatId !== null && store.get(key) === undefined) load();
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const refreshList = (): void => {
+    if (chats === undefined) return;
+    const ws = workspaceKey;
+    setListView({ workspace: ws, list: { kind: "loading" } });
+    void chats.onListChats().then(
+      (r) =>
+        // Applied only while THAT workspace's list is still open — a late result never reopens a closed list.
+        setListView((cur) =>
+          cur.workspace === ws && cur.list.kind !== "closed" ? { workspace: ws, list: r.ok ? { kind: "loaded", chats: r.chats } : { kind: "failed" } } : cur,
+        ),
+      () => setListView((cur) => (cur.workspace === ws && cur.list.kind !== "closed" ? { workspace: ws, list: { kind: "failed" } } : cur)),
+    );
+  };
+  const toggleList = (): void => {
+    if (list.kind === "closed") refreshList();
+    else setListView({ workspace: workspaceKey, list: CLOSED });
+  };
+  const closeListAndFocusInput = (): void => {
+    setListView({ workspace: workspaceKey, list: CLOSED });
+    inputRef.current?.focus();
+  };
+  const deleteChat = (id: string): void => {
+    if (chats === undefined) return;
+    const ws = workspaceKey;
+    const current = chatId;
+    const c = chats;
+    setDeleteFailed(null);
+    void c.onDeleteChat(id).then((r) => {
+      if (r.ok) store.remove(chatSessionKey(ws, id));
+      if (workspaceRef.current !== ws) return; // the owner moved on: touch nothing under another workspace
+      if (!r.ok) {
+        setDeleteFailed({ workspace: ws, chatId: id });
+        return;
       }
-      setTurns((prev) => [...prev, turn]);
-      setPending(false);
-      if (list.kind !== "closed") refreshList(); // a first answer adds the chat to the list
+      if (id === current) c.onNewChat(); // the open chat is gone — start a new one
+      refreshList();
+      toggleRef.current?.focus();
+    });
+  };
+
+  const submit = (): void => {
+    const q = draftText.trim();
+    if (q === "" || onAsk === undefined || pending || status !== "ready") return;
+    setDraft("");
+    const k = key;
+    const ws = workspaceKey;
+    store.update(k, (s) => ({ ...(s ?? READY), pending: true }));
+    // The answer goes into ITS chat's session — shown there whenever that chat is on screen, never anywhere else.
+    // A failed ask is an explicit failure turn (9.24), never a silent one.
+    const finish = (result: AskResult): void => {
+      const turn = turnFromResult(q, result);
+      store.update(k, (s) => ({ ...(s ?? READY), pending: false, turns: [...(s?.turns ?? []), turn] }));
+      if (result.ok && workspaceRef.current === ws && listOpenRef.current) refreshList(); // a first answer adds the chat
     };
     // createAskCopilot never rejects (it folds to {ok:false}), but guard the rejection path anyway.
     void onAsk(q).then(finish, () => finish({ ok: false }));
   };
+
+  const deleteFailedHere = deleteFailed !== null && deleteFailed.workspace === workspaceKey ? deleteFailed.chatId : null;
 
   return (
     <aside className="sow-copilot-panel" aria-label="Copilot">
@@ -427,6 +503,7 @@ export function Copilot(props: CopilotProps): ReactElement {
         <span className="sow-copilot-title">Copilot</span>
         {chats !== undefined && workspaceScoped ? (
           <button
+            ref={toggleRef}
             className="sow-copilot-chats-toggle"
             type="button"
             aria-label="Chats"
@@ -452,9 +529,9 @@ export function Copilot(props: CopilotProps): ReactElement {
         </button>
       </header>
 
-      {/* Persistent read-only reminder — present in EVERY state (§4.6). */}
+      {/* Persistent reminder — present in EVERY state (§4.6). */}
       <div className="sow-copilot-note" role="note">
-        Copilot reads only — it never writes or sends. Any action becomes a proposal that routes to Approvals.
+        Copilot reads only — it never changes your notes or sends anything. Any action becomes a proposal that routes to Approvals.
       </div>
 
       <div className="sow-copilot-body">
@@ -464,13 +541,18 @@ export function Copilot(props: CopilotProps): ReactElement {
               className="sow-copilot-newchat"
               type="button"
               onClick={() => {
-                setList({ kind: "closed" });
+                closeListAndFocusInput();
                 chats.onNewChat();
               }}
             >
               New chat
             </button>
             <p className="sow-copilot-chats-note">Chats are saved on this Mac, for this workspace only.</p>
+            {deleteFailedHere !== null ? (
+              <p className="sow-copilot-chats-note" role="alert">
+                Could not delete that chat. Try again.
+              </p>
+            ) : null}
             {list.kind === "loading" ? (
               <p className="sow-copilot-chats-note" role="status">Loading chats…</p>
             ) : list.kind === "failed" ? (
@@ -479,26 +561,38 @@ export function Copilot(props: CopilotProps): ReactElement {
               <p className="sow-copilot-chats-note" role="status">No saved chats yet.</p>
             ) : (
               <ul className="sow-copilot-chatlist">
-                {list.chats.map((c) => (
-                  <li key={c.chatId} className="sow-copilot-chat-item">
-                    <button
-                      className="sow-copilot-chat-open"
-                      type="button"
-                      aria-current={c.chatId === chatId ? "true" : undefined}
-                      onClick={() => {
-                        setList({ kind: "closed" });
-                        chats.onOpenChat(c.chatId);
-                      }}
-                    >
-                      {c.title}
-                    </button>
-                    <button className="sow-copilot-chat-delete" type="button" aria-label={`Delete chat: ${c.title}`} onClick={() => deleteChat(c.chatId)}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-                        <path d="M6 6l12 12M18 6L6 18" />
-                      </svg>
-                    </button>
-                  </li>
-                ))}
+                {list.chats.map((c) => {
+                  // A chat with an answer in flight cannot be deleted: the worker would save that answer into it and
+                  // bring the chat back (review of 5b.4d, measured).
+                  const busy = store.get(chatSessionKey(workspaceKey, c.chatId))?.pending === true;
+                  return (
+                    <li key={c.chatId} className="sow-copilot-chat-item">
+                      <button
+                        className="sow-copilot-chat-open"
+                        type="button"
+                        aria-current={c.chatId === chatId ? "true" : undefined}
+                        onClick={() => {
+                          closeListAndFocusInput();
+                          chats.onOpenChat(c.chatId);
+                        }}
+                      >
+                        {c.title}
+                      </button>
+                      <button
+                        className="sow-copilot-chat-delete"
+                        type="button"
+                        aria-label={`Delete chat: ${c.title}`}
+                        disabled={busy}
+                        title={busy ? "Wait for the answer, then delete" : undefined}
+                        onClick={() => deleteChat(c.chatId)}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                          <path d="M6 6l12 12M18 6L6 18" />
+                        </svg>
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -507,13 +601,16 @@ export function Copilot(props: CopilotProps): ReactElement {
           <div className="sow-copilot-empty" role="status">
             Copilot reads a single workspace&apos;s knowledge — pick a workspace to ask.
           </div>
-        ) : loading ? (
+        ) : status === "loading" ? (
           <div className="sow-copilot-empty" role="status">
             Loading this chat…
           </div>
-        ) : loadFailed && turns.length === 0 && !pending ? (
+        ) : status === "failed" ? (
           <div className="sow-copilot-empty" role="status">
-            Could not load this chat. Start a new chat, or try again later.
+            <p className="sow-copilot-empty-lead">Could not load this chat.</p>
+            <button className="sow-copilot-chip" type="button" onClick={load}>
+              Try again
+            </button>
           </div>
         ) : turns.length === 0 && !pending ? (
           // Empty-until-data — the ask-a-question state + example prompts.
@@ -536,6 +633,11 @@ export function Copilot(props: CopilotProps): ReactElement {
           </div>
         ) : (
           <div className="sow-copilot-transcript" role="log" aria-label="Conversation">
+            {truncated ? (
+              <p className="sow-copilot-chats-note" role="status">
+                Older messages in this chat are not shown.
+              </p>
+            ) : null}
             {turns.map((turn) => (
               <CopilotTurn key={turn.id} turn={turn} />
             ))}
@@ -548,14 +650,15 @@ export function Copilot(props: CopilotProps): ReactElement {
         )}
       </div>
 
-      {/* Composer — only where an ask is possible (a single workspace). Live when `onAsk` is provided. */}
+      {/* Composer — only where an ask is possible (a single workspace). Live when `onAsk` is provided; Send waits while
+          an answer is in flight or the chat is loading or failed to load. */}
       {workspaceScoped ? (
         <Composer
-          value={draft}
+          value={draftText}
           onChange={setDraft}
           onSubmit={submit}
-          disabled={!live || loading}
-          pending={pending}
+          disabled={!live}
+          pending={pending || status !== "ready"}
           inputRef={inputRef}
         />
       ) : null}
