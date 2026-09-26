@@ -259,8 +259,9 @@ function defineLifecycleSuite<H>(fix: LifecycleFixture<H>): void {
         // once updates exist; see docs/findings/external-write-update-path.md),
         // all applied from empty.
         // + 0018_source_disposition_workspace (task 7.19 — the WS-8 scoping column that
-        // lets a retention sweep enumerate ONE workspace without reading foreign rows).
-        expect(r.value.applied).toBe(19);
+        // lets a retention sweep enumerate ONE workspace without reading foreign rows)
+        // + 0019_copilot_chats (Linear slice 5b.4a — the Copilot's saved chats, two CREATE TABLEs).
+        expect(r.value.applied).toBe(20);
         expect(r.value.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
         expect(r.value.backup.dialect).toBe(fix.dialect);
 

@@ -44,3 +44,5 @@ export * from "./schedule-bookkeeping";
 export * from "./instance-leases";
 // §16 — the durable cross-run cost/budget ledger (task 19.11).
 export * from "./cost-ledger";
+// Linear slice 5b.4a — the Copilot's saved chats (a conversation log, never a retrieval source).
+export * from "./copilot-chats";

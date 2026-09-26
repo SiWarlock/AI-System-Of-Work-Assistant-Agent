@@ -134,6 +134,13 @@
       "when": 1787951578873,
       "tag": "0018_source_disposition_workspace",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790387494692,
+      "tag": "0019_copilot_chats",
+      "breakpoints": true
     }
   ]
 }
