@@ -487,8 +487,8 @@ export const COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT = [
  * read tools). The read-only prompt says "you must never propose a write", which such a job cannot obey. This one keeps
  * every grounding rule (with the external prompt's "or the owner's own words" widening) and replaces that line with WHEN
  * and HOW to propose a note: only when the owner explicitly asked; every value from the owner's words or the passages,
- * else ask (REQ-F-017); never a path, a workspace or a percent (the worker derives the path and the workspace; a note
- * carries no percent, REQ-F-011). The proposal is a PENDING
+ * else ask (REQ-F-017); never a path, a workspace or a percent (the worker derives the path and the workspace; a proposal
+ * carries no percent: progress is computed from the project's tasks, REQ-F-011). The proposal is a PENDING
  * card; KnowledgeWriter writes only after the owner approves it (rule 1).
  */
 export const COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT = [
@@ -504,7 +504,7 @@ export const COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT = [
   "- Propose a note ONLY when the owner explicitly asked you to capture or update a project's status",
   "  (e.g. \"mark Acme as paused\"). Otherwise answer only.",
   "- Use propose_knowledge with projectId, title, lifecycleState and, only if you have one, summary.",
-  "  Never supply a path, a workspace or a percent: the system sets the path and the workspace, and a note has no percent.",
+  "  Never supply a path, a workspace or a percent: the system sets the path and the workspace, and computes progress from the project's tasks.",
   "- Take every value you supply only from the owner's own words or the passages. Never guess a project, a state,",
   "  a date, a person or a figure. If you cannot tell which project or which state the owner means, ask the owner",
   "  instead of proposing.",

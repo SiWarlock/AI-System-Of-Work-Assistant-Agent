@@ -536,10 +536,12 @@ describe("COPILOT_AGENT_KNOWLEDGE_PROPOSE_SYSTEM_PROMPT — the note-propose job
     expect(flat).toMatch(/ask the owner instead of proposing/);
   });
 
-  it("names the tool's own fields and never a path, a workspace or a percent (the system sets path and workspace; a note has no percent)", () => {
-    for (const field of Object.keys(PROPOSE_KNOWLEDGE_INPUT_SHAPE)) expect(K).toContain(field);
+  it("names the tool's own fields and never a path, a workspace or a percent (the system sets path and workspace; progress is computed)", () => {
+    // on the tool line itself: "title" also appears in the reply-format line, so a whole-prompt match would miss a rename
+    const toolLine = K.split("\n").find((l) => l.startsWith("- Use propose_knowledge with ")) ?? "";
+    for (const field of Object.keys(PROPOSE_KNOWLEDGE_INPUT_SHAPE)) expect(toolLine).toContain(field);
     expect(flat).toMatch(
-      /Never supply a path, a workspace or a percent: the system sets the path and the workspace, and a note has no percent/,
+      /Never supply a path, a workspace or a percent: the system sets the path and the workspace, and computes progress from the project's tasks/,
     );
   });
 
