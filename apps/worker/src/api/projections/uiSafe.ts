@@ -50,13 +50,13 @@ import {
   MAX_LINEAR_TEAMS,
   MAX_DETAIL_DESCRIPTION_LINES,
   isCalendarDate,
-  UiSafeCopilotAnswerSchema,
   UiSafeCopilotChatSummarySchema,
   UiSafeCopilotChatTurnSchema,
   MAX_COPILOT_CHATS,
   MAX_RESTORED_CHAT_TURNS,
 } from "@sow/contracts";
 import { permitsRawDrillDown } from "@sow/policy";
+import { decodeSavedAnswer } from "../procedures/copilotChatHistory";
 
 /**
  * Copy an OPTIONAL field only when it is defined — so an absent optional field is
@@ -441,8 +441,9 @@ export function toUiSafeCopilotChatList(rows: readonly { chatId: unknown; title:
 
 /**
  * Project one saved chat (its turns oldest first, as stored). ⛔ Task 9.25: each turn keeps its WHOLE gated answer —
- * re-validated from the stored JSON against the answer contract, so the egress notice comes back with it. A turn that
- * no longer validates is dropped. Keeps the newest {@link MAX_RESTORED_CHAT_TURNS}; `truncated` says older ones exist.
+ * decoded by `decodeSavedAnswer`, which requires the saved EXPLICIT disclosure to agree with the answer — so the egress
+ * notice comes back with it, and a saved cloud answer whose notice went missing is never restored as a silent answer.
+ * A turn that does not decode is dropped. Keeps the newest {@link MAX_RESTORED_CHAT_TURNS}; `truncated` says older ones exist.
  */
 export function toUiSafeCopilotChat(src: {
   chatId: string;
@@ -453,15 +454,10 @@ export function toUiSafeCopilotChat(src: {
   const newest = src.turns.slice(-MAX_RESTORED_CHAT_TURNS);
   const turns: UiSafeCopilotChatTurn[] = [];
   for (const t of newest) {
-    let answer: unknown;
-    try {
-      answer = typeof t.answer === "string" ? JSON.parse(t.answer) : undefined;
-    } catch {
-      continue;
-    }
-    const gated = UiSafeCopilotAnswerSchema.safeParse(answer);
-    if (!gated.success) continue;
-    const turn = { question: t.question, answer: gated.data };
+    // ⛔ 9.25: the saved answer must carry an explicit disclosure that AGREES with it — else the turn is not restored.
+    const answer = typeof t.answer === "string" ? decodeSavedAnswer(t.answer) : undefined;
+    if (answer === undefined) continue;
+    const turn = { question: t.question, answer };
     if (UiSafeCopilotChatTurnSchema.safeParse(turn).success) turns.push(turn as UiSafeCopilotChatTurn);
   }
   return { chatId: src.chatId, title: chatTitle(src.title), turns, truncated: src.truncated || src.turns.length > newest.length };

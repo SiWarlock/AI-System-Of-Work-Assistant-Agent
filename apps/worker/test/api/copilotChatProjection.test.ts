@@ -11,6 +11,7 @@ import {
   MAX_RESTORED_CHAT_TURNS,
 } from "@sow/contracts";
 import { toUiSafeCopilotChatList, toUiSafeCopilotChat } from "../../src/api/projections/uiSafe";
+import { encodeSavedAnswer } from "../../src/api/procedures/copilotChatHistory";
 
 const NL = String.fromCharCode(10);
 const T = "2026-09-25T10:00:00.000Z";
@@ -43,7 +44,7 @@ describe("toUiSafeCopilotChatList", () => {
 });
 
 describe("toUiSafeCopilotChat", () => {
-  const turn = (q: string, a: unknown = answer) => ({ question: q, answer: JSON.stringify(a), chatId: "c1", seq: 1, createdAt: T });
+  const turn = (q: string, a: unknown = answer) => ({ question: q, answer: encodeSavedAnswer(a as never), chatId: "c1", seq: 1, createdAt: T });
 
   it("⛔ 9.25: restores each turn with its WHOLE gated answer — the egress notice too", () => {
     const out = toUiSafeCopilotChat({ chatId: "c1", title: "Login", turns: [turn("What is it?")], truncated: false });
@@ -56,7 +57,16 @@ describe("toUiSafeCopilotChat", () => {
     const out = toUiSafeCopilotChat({
       chatId: "c1",
       title: "t",
-      turns: [turn("ok"), { ...turn("broken"), answer: "{not json" }, turn("extra key", { ...answer, payload: "SECRET" }), turn("x".repeat(4001)), turn("")],
+      turns: [
+        turn("ok"),
+        { ...turn("broken"), answer: "{not json" },
+        { ...turn("extra key"), answer: JSON.stringify({ answer: { ...answer, payload: "SECRET" }, disclosure: { kind: "processor", value: "claude" } }) },
+        // ⛔ 9.25: a saved cloud answer whose notice is missing is NOT restored as a silent answer.
+        { ...turn("notice lost"), answer: JSON.stringify({ answer: { answer: ["x"], citations: [] }, disclosure: { kind: "processor", value: "claude" } }) },
+        { ...turn("bare answer"), answer: JSON.stringify(answer) },
+        turn("x".repeat(4001)),
+        turn(""),
+      ],
       truncated: false,
     });
     expect(out.turns.map((t) => t.question)).toEqual(["ok"]);

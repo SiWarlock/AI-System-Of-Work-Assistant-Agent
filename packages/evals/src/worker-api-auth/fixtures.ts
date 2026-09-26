@@ -248,8 +248,16 @@ export function taintedCopilotChatSource(): Record<string, unknown> {
     workspaceId: SENTINEL_KEYCHAIN_REF,
     ...TAINT,
     turns: [
-      { question: "Probe question", answer: JSON.stringify({ answer: ["Probe answer"], citations: [] }), workspaceId: SENTINEL_KEYCHAIN_REF, turnId: SENTINEL_AGENT_LOG, seq: 1, ...TAINT },
-      { question: "Tainted answer", answer: JSON.stringify({ answer: ["x"], citations: [], payload: SENTINEL_EMPLOYER_RAW }) },
+      {
+        question: "Probe question",
+        answer: JSON.stringify({ answer: { answer: ["Probe answer"], citations: [] }, disclosure: { kind: "none" } }),
+        workspaceId: SENTINEL_KEYCHAIN_REF,
+        turnId: SENTINEL_AGENT_LOG,
+        seq: 1,
+        ...TAINT,
+      },
+      { question: "Tainted answer", answer: JSON.stringify({ answer: { answer: ["x"], citations: [], payload: SENTINEL_EMPLOYER_RAW }, disclosure: { kind: "none" } }) },
+      { question: "Tainted envelope", answer: JSON.stringify({ answer: { answer: ["y"], citations: [] }, disclosure: { kind: "none" }, extra: SENTINEL_SECRET }) },
     ],
   };
 }

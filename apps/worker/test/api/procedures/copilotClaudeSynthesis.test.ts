@@ -581,6 +581,14 @@ describe("buildCopilotDeps — the flag branch, unit-tested (a flipped ternary c
   const employer: readonly CopilotWorkspace[] = [{ id: "ws-employer", type: "employer_work" }];
   const okCompletion = () => recordingClient(ok({ structuredOutput: goodOutput, costUsd: 0.01 })).client;
 
+  it("Linear slice 5b.4b: hands the chat memory to the ask's deps, and leaves it out when none is given", () => {
+    // Review 2026-09-25: without this pin, dropping the forward left boot's binding in place and memory silently OFF.
+    const chats = { recent: async () => [], save: async () => {} };
+    const base = { auditPersist: auditNoop, realCopilot: false, workspaces: employer, workspacePosture: fixturePostureResolver(employer, false), completion: okCompletion };
+    expect(testCopilotDeps({ ...base, chats }).chats).toBe(chats);
+    expect("chats" in testCopilotDeps(base)).toBe(false);
+  });
+
   it("OFF: fail-closed posture (ack off) + local route (no notice); the completion factory is NEVER called", async () => {
     let factoryCalls = 0;
     const deps = testCopilotDeps({ auditPersist: auditNoop,

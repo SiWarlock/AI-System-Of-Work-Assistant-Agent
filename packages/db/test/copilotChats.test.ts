@@ -39,6 +39,7 @@ const DROP = `DROP TABLE "copilot_chat_turns"; DROP TABLE "copilot_chats";`;
 
 interface Handle {
   readonly make: (opts?: { maxTurns?: number }) => CopilotChatRepository;
+  readonly exec: (sql: string) => void | Promise<void>;
   readonly dropTables: () => void | Promise<void>;
   readonly teardown: () => Promise<void>;
 }
@@ -56,6 +57,7 @@ const sqliteCase: AdapterCase = {
     const db = drizzleSqlite(sqlite);
     return {
       make: (opts) => createSqliteCopilotChatRepository(db, opts),
+      exec: (sql) => void sqlite.exec(sql),
       dropTables: () => void sqlite.exec(DROP),
       teardown: async () => void sqlite.close(),
     };
@@ -70,6 +72,7 @@ const pgCase: AdapterCase = {
     const db = drizzlePglite(client);
     return {
       make: (opts) => createPostgresCopilotChatRepository(db, opts),
+      exec: async (sql) => void (await client.exec(sql)),
       dropTables: async () => void (await client.exec(DROP)),
       teardown: async () => void (await client.close()),
     };
@@ -206,6 +209,32 @@ describe.each([sqliteCase, pgCase])("CopilotChatRepository contract :: $name", (
     expect(isOk(second)).toBe(true);
     const twice = await repo.deleteChat(EMP, "chat-a");
     expect(isErr(twice) && twice.error.code).toBe("not_found");
+  });
+
+  it("a newest count below 1, or not a number, reads NO turns — never all of them (review 2026-09-25)", async () => {
+    h = await adapter.setup();
+    const repo = h.make();
+    for (let i = 1; i <= 4; i++) await repo.appendTurn(turn({ question: `q${String(i)}` }));
+    for (const n of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const r = await repo.getTurns(EMP, "chat-a", n);
+      expect(isOk(r) && r.value.length, String(n)).toBe(0);
+    }
+    const frac = await repo.getTurns(EMP, "chat-a", 2.7);
+    expect(isOk(frac) && frac.value.map((t) => t.question)).toEqual(["q3", "q4"]);
+  });
+
+  it("⛔ rule 7: a failed write's error never carries the question or the answer (review 2026-09-25, measured on pg)", async () => {
+    h = await adapter.setup();
+    const repo = h.make();
+    // Seize the turn id "c1:1" under another chat, so appending chat c1's first turn collides on its INSERT — the
+    // query whose parameters hold the question and the answer (drizzle's pg errors print them).
+    await h.exec(`INSERT INTO "copilot_chat_turns" ("turnId","chatId","workspaceId","seq","question","answer","createdAt") VALUES ('c1:1','zz','${EMP}',1,'q','a','t')`);
+    const r = await repo.appendTurn(turn({ chatId: "c1", question: "SECRET_QUESTION_TEXT", answer: "SECRET_ANSWER_TEXT", title: "SECRET_TITLE" }));
+    expect(isErr(r)).toBe(true);
+    if (isErr(r)) {
+      expect(r.error.code).toBe("conflict");
+      expect(JSON.stringify({ message: r.error.message, cause: String(r.error.cause ?? "") })).not.toContain("SECRET_");
+    }
   });
 
   it("an unknown chat is not_found — never an empty chat invented", async () => {

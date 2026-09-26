@@ -6,12 +6,12 @@
 //
 // ⛔ Rule 4: every call is keyed by the ask's own (workspaceId, chatId); the repository refuses a chat id that exists
 // under another workspace (a read is empty, a save is refused). ⛔ Rule 7: question/answer are raw content — never
-// logged here, and a store fault is swallowed WITHOUT its message (it could name a column, never a value, but nothing
-// here needs it). Never throws: an unreadable chat is no history; a failed save never fails an answered ask.
+// logged here, and a store fault is swallowed without its message (the repository already returns a fixed message and
+// no cause). Never throws: an unreadable chat is no history; a failed save never fails an answered ask.
 import { isOk } from "@sow/contracts";
 import type { CopilotChatRepository } from "@sow/db/repositories/copilotChats";
 import type { CopilotChatMemory } from "../api/procedures/copilot";
-import { chatTitleOf } from "../api/procedures/copilotChatHistory";
+import { chatTitleOf, encodeSavedAnswer } from "../api/procedures/copilotChatHistory";
 
 /** Build the ask's chat memory over the saved-chats repository. `now` is the boot clock (ISO-8601). */
 export function createCopilotChatMemory(repo: CopilotChatRepository, now: () => string): CopilotChatMemory {
@@ -31,7 +31,7 @@ export function createCopilotChatMemory(repo: CopilotChatRepository, now: () => 
           chatId: turn.chatId,
           title: chatTitleOf(turn.question),
           question: turn.question,
-          answer: JSON.stringify(turn.answer),
+          answer: encodeSavedAnswer(turn.answer), // ⛔ 9.25: with its explicit disclosure
           at: now(),
         });
       } catch {

@@ -2,13 +2,16 @@
 // chats are saved in the local store so they survive a restart, as one list of chats per workspace).
 //
 // STANDALONE like `costLedger.ts`: each dialect gets a small factory over an injected drizzle handle, built from the
-// canonical schema pair (`../schema/copilot-chats`, `../schema/pg/copilot-chats`). ⚠ NOT BOUND YET: slice 5b.4b binds
-// it in the worker over the SAME migrated handle its other repositories use (migration `0019_copilot_chats`).
+// canonical schema pair (`../schema/copilot-chats`, `../schema/pg/copilot-chats`). BOUND since slice 5b.4b: the worker
+// builds the SQLite driver over the SAME migrated handle its other repositories use (migration `0019_copilot_chats`),
+// and every Copilot ask that names a chat reads and writes these tables.
 //
 // ⛔ WS-8 (rule 4): EVERY method is keyed by (workspaceId, chatId). A chat id that exists under another workspace is
 // refused on append (`conflict`, nothing written) and is `not_found` for every read and delete from this workspace.
 // ⛔ Rule 1: a conversation log — never a retrieval source, never a semantic fact. ⛔ Rule 7: `question`/`answer`
-// are raw content; this module never logs them, and no error message carries them (driver messages name columns only).
+// are raw content; this module never logs them, and every error it returns carries ONLY a code and a fixed message —
+// never the driver's message or cause (drizzle's pg errors print the query's parameters, so they would carry the
+// question and the answer; review 2026-09-25, measured).
 //
 // ERROR CONVENTION (§16): NOTHING throws across the boundary; every method returns a typed `DbResult`.
 import { and, asc, desc, eq, lte, sql } from "drizzle-orm";
@@ -67,7 +70,10 @@ export interface CopilotChatRepository {
   listChats(workspaceId: string, limit: number): DbResult<readonly CopilotChatRow[]>;
   /** One chat of this workspace — `not_found` if absent HERE (including when it exists under another workspace). */
   getChat(workspaceId: string, chatId: string): DbResult<CopilotChatRow>;
-  /** A chat's turns, oldest first — only the `newest` N when given. `not_found` if the chat is absent HERE. */
+  /**
+   * A chat's turns, oldest first — only the `newest` N when given (N below 1, or not a finite number, reads none).
+   * `not_found` if the chat is absent HERE.
+   */
   getTurns(workspaceId: string, chatId: string, newest?: number): DbResult<readonly CopilotChatTurnRow[]>;
   /** Delete a chat and all its turns — `not_found` if absent HERE. */
   deleteChat(workspaceId: string, chatId: string): DbResult<void>;
@@ -93,8 +99,15 @@ const toChatRow = (r: CopilotChatRow): CopilotChatRow => ({
   createdAt: r.createdAt,
   updatedAt: r.updatedAt,
 });
-/** A request for the newest N (N ≥ 1) — anything else means "all". */
-const newestCount = (n: number | undefined): number | undefined => (n !== undefined && Number.isInteger(n) && n >= 1 ? n : undefined);
+/**
+ * The newest-N request: `undefined` ⇒ all turns; otherwise the floor of a finite N ≥ 1, and 0 for anything else
+ * (0, a negative number, NaN, Infinity) — never "all" by accident.
+ */
+const newestCount = (n: number | undefined): number | undefined =>
+  n === undefined ? undefined : Number.isFinite(n) && n >= 1 ? Math.floor(n) : 0;
+
+/** ⛔ Rule 7: keep only the error's CODE and a fixed message — the driver's message and cause may carry content. */
+const scrubbed = (e: DbError, message: string): DbError => ({ code: e.code, message });
 
 // ── SQLite driver ─────────────────────────────────────────────────────────────
 
@@ -131,7 +144,7 @@ export function createSqliteCopilotChatRepository(
         });
         return out === undefined ? err(conflictSqlite("copilot chat belongs to another workspace")) : ok({ seq: out });
       } catch (cause) {
-        return err(toSqliteDbError(cause, "copilot_chats append failed"));
+        return err(scrubbed(toSqliteDbError(cause, "copilot_chats append failed"), "copilot_chats append failed"));
       }
     },
     async listChats(workspaceId, limit): DbResult<readonly CopilotChatRow[]> {
@@ -139,7 +152,7 @@ export function createSqliteCopilotChatRepository(
         const rows = db.select().from(c).where(eq(c.workspaceId, workspaceId)).orderBy(desc(c.updatedAt), desc(c.chatId)).limit(Math.max(0, limit)).all();
         return ok(rows.map(toChatRow));
       } catch (cause) {
-        return err(toSqliteDbError(cause, "copilot_chats list failed"));
+        return err(scrubbed(toSqliteDbError(cause, "copilot_chats list failed"), "copilot_chats list failed"));
       }
     },
     async getChat(workspaceId, chatId): DbResult<CopilotChatRow> {
@@ -147,7 +160,7 @@ export function createSqliteCopilotChatRepository(
         const row = chatHere(workspaceId, chatId);
         return row === undefined ? err(notFoundSqlite("copilot chat")) : ok(toChatRow(row));
       } catch (cause) {
-        return err(toSqliteDbError(cause, "copilot_chats get failed"));
+        return err(scrubbed(toSqliteDbError(cause, "copilot_chats get failed"), "copilot_chats get failed"));
       }
     },
     async getTurns(workspaceId, chatId, newest): DbResult<readonly CopilotChatTurnRow[]> {
@@ -155,13 +168,14 @@ export function createSqliteCopilotChatRepository(
         if (chatHere(workspaceId, chatId) === undefined) return err(notFoundSqlite("copilot chat"));
         const where = and(eq(t.chatId, chatId), eq(t.workspaceId, workspaceId));
         const n = newestCount(newest);
+        if (n === 0) return ok([]);
         const rows =
           n === undefined
             ? db.select().from(t).where(where).orderBy(asc(t.seq)).all()
             : db.select().from(t).where(where).orderBy(desc(t.seq)).limit(n).all().reverse();
         return ok(rows.map(toTurnRow));
       } catch (cause) {
-        return err(toSqliteDbError(cause, "copilot_chats turns failed"));
+        return err(scrubbed(toSqliteDbError(cause, "copilot_chats turns failed"), "copilot_chats turns failed"));
       }
     },
     async deleteChat(workspaceId, chatId): DbResult<void> {
@@ -175,7 +189,7 @@ export function createSqliteCopilotChatRepository(
         });
         return gone ? ok(undefined) : err(notFoundSqlite("copilot chat"));
       } catch (cause) {
-        return err(toSqliteDbError(cause, "copilot_chats delete failed"));
+        return err(scrubbed(toSqliteDbError(cause, "copilot_chats delete failed"), "copilot_chats delete failed"));
       }
     },
   };
@@ -183,7 +197,11 @@ export function createSqliteCopilotChatRepository(
 
 // ── Postgres driver ────────────────────────────────────────────────────────────
 
-/** Mirrors the SQLite driver exactly. Two racing appends to one chat collide on the turn id and one gets `conflict`. */
+/**
+ * Mirrors the SQLite driver. On a real Postgres pool, appends to an EXISTING chat wait in turn on the chat row's update
+ * lock; two racing FIRST appends to a new chat can collide on the chat id or the turn id, and the loser gets `conflict`
+ * (nothing half-written). The worker binds only the SQLite driver today.
+ */
 export function createPostgresCopilotChatRepository(
   db: PgDatabase<PgQueryResultHKT>,
   opts: CopilotChatRepositoryOptions = {},
@@ -215,7 +233,7 @@ export function createPostgresCopilotChatRepository(
         });
         return out === undefined ? err({ code: "conflict", message: "copilot chat belongs to another workspace" }) : ok({ seq: out });
       } catch (cause) {
-        return err(toPostgresDbError(cause, "copilot_chats append failed"));
+        return err(scrubbed(toPostgresDbError(cause, "copilot_chats append failed"), "copilot_chats append failed"));
       }
     },
     async listChats(workspaceId, limit): DbResult<readonly CopilotChatRow[]> {
@@ -223,7 +241,7 @@ export function createPostgresCopilotChatRepository(
         const rows = await db.select().from(c).where(eq(c.workspaceId, workspaceId)).orderBy(desc(c.updatedAt), desc(c.chatId)).limit(Math.max(0, limit));
         return ok(rows.map(toChatRow));
       } catch (cause) {
-        return err(toPostgresDbError(cause, "copilot_chats list failed"));
+        return err(scrubbed(toPostgresDbError(cause, "copilot_chats list failed"), "copilot_chats list failed"));
       }
     },
     async getChat(workspaceId, chatId): DbResult<CopilotChatRow> {
@@ -231,7 +249,7 @@ export function createPostgresCopilotChatRepository(
         const row = await chatHere(workspaceId, chatId);
         return row === undefined ? err(notFoundPostgres("copilot chat")) : ok(toChatRow(row));
       } catch (cause) {
-        return err(toPostgresDbError(cause, "copilot_chats get failed"));
+        return err(scrubbed(toPostgresDbError(cause, "copilot_chats get failed"), "copilot_chats get failed"));
       }
     },
     async getTurns(workspaceId, chatId, newest): DbResult<readonly CopilotChatTurnRow[]> {
@@ -239,13 +257,14 @@ export function createPostgresCopilotChatRepository(
         if ((await chatHere(workspaceId, chatId)) === undefined) return err(notFoundPostgres("copilot chat"));
         const where = and(eq(t.chatId, chatId), eq(t.workspaceId, workspaceId));
         const n = newestCount(newest);
+        if (n === 0) return ok([]);
         const rows =
           n === undefined
             ? await db.select().from(t).where(where).orderBy(asc(t.seq))
             : (await db.select().from(t).where(where).orderBy(desc(t.seq)).limit(n)).reverse();
         return ok(rows.map(toTurnRow));
       } catch (cause) {
-        return err(toPostgresDbError(cause, "copilot_chats turns failed"));
+        return err(scrubbed(toPostgresDbError(cause, "copilot_chats turns failed"), "copilot_chats turns failed"));
       }
     },
     async deleteChat(workspaceId, chatId): DbResult<void> {
@@ -259,7 +278,7 @@ export function createPostgresCopilotChatRepository(
         });
         return gone ? ok(undefined) : err(notFoundPostgres("copilot chat"));
       } catch (cause) {
-        return err(toPostgresDbError(cause, "copilot_chats delete failed"));
+        return err(scrubbed(toPostgresDbError(cause, "copilot_chats delete failed"), "copilot_chats delete failed"));
       }
     },
   };

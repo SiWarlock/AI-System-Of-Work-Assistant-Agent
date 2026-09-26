@@ -780,14 +780,6 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
     ),
 
     /**
-     * Copilot Q&A (§4.6) — cited; no external write and no Markdown write. Retrieves a SINGLE workspace's
-     * knowledge (WS-8; unknown/foreign workspace → typed err, fail-closed), synthesizes a candidate
-     * answer, and gates it through `UiSafeCopilotAnswerSchema` before serving. An implied action
-     * becomes a proposal routed to Approvals — never a direct write. ⚠ Linear slice 5b.4b: with a
-     * `chatId`, the ask reads that chat's memory and SAVES the answered turn to the workspace's local
-     * chat store — the one exception to this file's "no side effects" header.
-     */
-    /**
      * Copilot on-request briefing (C6 §13.10 b-1) — READ-ONLY, cited, NO side effects. Assembles the
      * asking workspace's §9.4 Today read-model into a candidate context and runs it through the SAME
      * governed synthesis core as `copilotAsk` (WS-8 re-guard → egress veto → candidate/UI-safe gate).
@@ -811,6 +803,15 @@ export function buildQueryRouter(deps: QueryRouterDeps) {
           answerCopilotConcept(copilot, input),
       ),
     ),
+    /**
+     * Copilot Q&A (§4.6) — cited; no external write and no Markdown write. Retrieves a SINGLE workspace's
+     * knowledge (WS-8; unknown/foreign workspace → typed err, fail-closed), synthesizes a candidate
+     * answer, and gates it through `UiSafeCopilotAnswerSchema` before serving. An implied action
+     * becomes a proposal routed to Approvals — never a direct write. ⚠ NOT side-effect-free, unlike this
+     * file's header says of its procedures: a denied ask writes its denial audit (24.7), a propose job
+     * records its pending proposal, and (Linear slice 5b.4b) an ask with a `chatId` reads that chat's
+     * memory and SAVES the answered turn to the workspace's local chat store.
+     */
     copilotAsk: publicProcedure.input(parseAskInput).query(
       authedResolver<CopilotAskInput, UiSafeCopilotAnswer>(
         (_ctx, input): Promise<Result<UiSafeCopilotAnswer, FailureVariant>> =>

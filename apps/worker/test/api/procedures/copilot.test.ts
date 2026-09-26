@@ -15,6 +15,7 @@ import {
   createStubSynthesis,
   toUiSafeCopilotAnswer,
   answerCopilotQuestion,
+  mergeRetrievedContexts,
   type RetrievedContext,
   type CandidateCopilotAnswer,
   type CopilotDeps,
@@ -24,7 +25,7 @@ import {
   type EgressNotice,
   type CopilotChatMemory,
 } from "../../../src/api/procedures/copilot";
-import { COPILOT_HISTORY_MAX_TURNS, type StoredChatTurn } from "../../../src/api/procedures/copilotChatHistory";
+import { COPILOT_HISTORY_MAX_TURNS, encodeSavedAnswer, type StoredChatTurn } from "../../../src/api/procedures/copilotChatHistory";
 
 const WS = "ws-employer";
 const OTHER = "ws-personal";
@@ -661,7 +662,7 @@ describe("toUiSafeCopilotAnswer — the egressProcessor notice is schema-gated (
 // SAME request's workspaceId. ⛔ Rule 5: the history reaches only synthesis, AFTER the egress veto — a denied ask sends
 // nothing and saves nothing. Only an answer that passed the UI-safe gate is saved.
 describe("answerCopilotQuestion — chat memory (Linear slice 5b.4b)", () => {
-  const stored = (q: string, a: string): StoredChatTurn => ({ question: q, answer: JSON.stringify({ answer: [a], citations: [] }) });
+  const stored = (q: string, a: string): StoredChatTurn => ({ question: q, answer: encodeSavedAnswer({ answer: [a], citations: [] }) });
   function memory(turns: Record<string, readonly StoredChatTurn[]> = {}) {
     const reads: [string, string, number][] = [];
     const saves: Parameters<CopilotChatMemory["save"]>[0][] = [];
@@ -678,9 +679,12 @@ describe("answerCopilotQuestion — chat memory (Linear slice 5b.4b)", () => {
       seen: () => args,
     };
   }
-  function recordingRetrieval(c: RetrievedContext): { retrieval: CopilotDeps["retrieval"]; queries: string[] } {
+  function recordingRetrieval(
+    c: RetrievedContext,
+    byQuery: Record<string, ReturnType<typeof ok<RetrievedContext>> | ReturnType<typeof err>> = {},
+  ): { retrieval: CopilotDeps["retrieval"]; queries: string[] } {
     const queries: string[] = [];
-    return { retrieval: { retrieve: async (_ws, q) => (queries.push(q), ok(c)) }, queries };
+    return { retrieval: { retrieve: async (_ws, q) => (queries.push(q), (byQuery[q] ?? ok(c)) as never) }, queries };
   }
   const base = (over: Partial<CopilotDeps> = {}): CopilotDeps => ({
     retrieval: createFixtureRetrieval({ [WS]: ctx(WS) }),
@@ -702,7 +706,8 @@ describe("answerCopilotQuestion — chat memory (Linear slice 5b.4b)", () => {
   it("with a chatId: the chat's turns become history, the follow-up searches the PREVIOUS question too, and the answer is saved", async () => {
     const m = memory({ [`${WS}/chat-1`]: [stored("What is the login bug?", "It loops.")] });
     const s = recordingSynth();
-    const r0 = recordingRetrieval(ctx(WS));
+    const prevCtx: RetrievedContext = { workspaceId: WS, blocks: ["The login bug loops."], sources: [{ citationId: "src:login", title: "Login bug" }] };
+    const r0 = recordingRetrieval(ctx(WS), { "What is the login bug?": ok(prevCtx) });
     const r = await answerCopilotQuestion(base({ chats: m.mem, synthesis: s.synth, retrieval: r0.retrieval }), {
       workspaceId: WS,
       question: "Core",
@@ -710,7 +715,11 @@ describe("answerCopilotQuestion — chat memory (Linear slice 5b.4b)", () => {
     });
     expect(isOk(r)).toBe(true);
     expect(m.reads).toEqual([[WS, "chat-1", COPILOT_HISTORY_MAX_TURNS]]);
-    expect(r0.queries).toEqual([`What is the login bug?${String.fromCharCode(10)}Core`]);
+    // TWO searches (review 2026-09-25: one joined query ANDs every word in gbrain's keyword arm), merged by citation.
+    expect(r0.queries).toEqual(["Core", "What is the login bug?"]);
+    const merged = s.seen()[2] as RetrievedContext;
+    expect(merged.sources.map((x) => x.citationId)).toEqual(["src:note-1", "src:login"]);
+    expect(merged.blocks).toEqual(["A decision was logged on the vendor review.", "The login bug loops."]);
     expect(s.seen()[1]).toBe("Core"); // the QUESTION stays the new one
     expect(s.seen()[4]).toEqual([
       { role: "owner", text: "What is the login bug?" },
@@ -747,6 +756,22 @@ describe("answerCopilotQuestion — chat memory (Linear slice 5b.4b)", () => {
     expect(m.saves).toEqual([]);
   });
 
+  it("the previous question's search is extra: if it fails, the ask still answers from the new question's search", async () => {
+    const m = memory({ [`${WS}/c`]: [stored("prev?", "a")] });
+    const r0 = recordingRetrieval(ctx(WS), { "prev?": err(failure("provider_failed", "down")) });
+    const r = await answerCopilotQuestion(base({ chats: m.mem, retrieval: r0.retrieval }), { workspaceId: WS, question: "q", chatId: "c" });
+    expect(isOk(r)).toBe(true);
+    expect(r0.queries).toEqual(["q", "prev?"]);
+  });
+
+  it("⛔ rule 4: the previous question's search returning ANOTHER workspace's context fails the ask closed", async () => {
+    const m = memory({ [`${WS}/c`]: [stored("prev?", "a")] });
+    const r0 = recordingRetrieval(ctx(WS), { "prev?": ok(ctx(OTHER)) });
+    const r = await answerCopilotQuestion(base({ chats: m.mem, retrieval: r0.retrieval }), { workspaceId: WS, question: "q", chatId: "c" });
+    expect(isErr(r)).toBe(true);
+    expect(m.saves).toEqual([]);
+  });
+
   it("a failed synthesis or a gate rejection saves nothing", async () => {
     const m = memory();
     const failing: CopilotSynthesisPort = { synthesize: () => err(failure("provider_failed", "x")) };
@@ -755,5 +780,21 @@ describe("answerCopilotQuestion — chat memory (Linear slice 5b.4b)", () => {
     const r = await answerCopilotQuestion(base({ chats: m.mem, synthesis: leaky }), { workspaceId: WS, question: "q", chatId: "c" });
     expect(isErr(r)).toBe(true);
     expect(m.saves).toEqual([]);
+  });
+});
+
+describe("mergeRetrievedContexts — a follow-up's two searches, merged by citation (Linear slice 5b.4b)", () => {
+  const src = (id: string) => ({ citationId: id, title: id });
+  it("keeps the first search's passages, then the second's NEW citations — each passage with its own source", () => {
+    const a: RetrievedContext = { workspaceId: WS, blocks: ["a1", "shared-from-a"], sources: [src("a1"), src("shared")] };
+    const b: RetrievedContext = { workspaceId: WS, blocks: ["shared-from-b", "b1"], sources: [src("shared"), src("b1")] };
+    expect(mergeRetrievedContexts(a, b)).toEqual({ workspaceId: WS, blocks: ["a1", "shared-from-a", "b1"], sources: [src("a1"), src("shared"), src("b1")] });
+  });
+  it("never appends a source without its passage, and leaves a misaligned first search as it is", () => {
+    const a: RetrievedContext = { workspaceId: WS, blocks: ["a1"], sources: [src("a1")] };
+    const noBlock: RetrievedContext = { workspaceId: WS, blocks: [], sources: [src("b1")] };
+    expect(mergeRetrievedContexts(a, noBlock)).toEqual(a);
+    const misaligned: RetrievedContext = { workspaceId: WS, blocks: [], sources: [src("a1")] };
+    expect(mergeRetrievedContexts(misaligned, { workspaceId: WS, blocks: ["b1"], sources: [src("b1")] })).toBe(misaligned);
   });
 });

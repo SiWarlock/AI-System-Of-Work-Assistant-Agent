@@ -4,12 +4,14 @@
 // given the chat's earlier turns ("file it in Core?" → "yes"). The owner chose the worker's local operational store
 // over vault notes: a Copilot answer is NOT knowledge, so it must never become a note that retrieval later reads.
 //
-// ⛔ Rule 1: a chat is a CONVERSATION LOG, never a semantic fact and never a retrieval source. The only intended
-// readers are the chat procedures and the ask path (which feeds the same chat's turns back as conversation) —
-// neither exists until slice 5b.4b; until then nothing reads or writes these tables.
+// ⛔ Rule 1: a chat is a CONVERSATION LOG, never a semantic fact and never a retrieval source. Its only readers are
+// the ask path (which feeds the same chat's turns back to the model as conversation, slice 5b.4b) and the saved-chats
+// procedures that list, open and delete chats (slice 5b.4c).
 // ⛔ Rule 4 / WS-8: every row carries its workspace, and every repository method is keyed by (workspaceId, chatId).
 // ⛔ Rule 7: `question` and `answer` ARE raw content (the owner's words and the Copilot's gated answer). They are
-// never logged, never in a health/diagnostics read, and never leave the worker except to the same workspace's chat.
+// never logged and never in a health/diagnostics read. They leave the worker only (a) to the renderer, for the same
+// workspace's chat, and (b) to the model provider as that chat's history, inside the same ask and after the same
+// egress veto (rule 5) as the question itself.
 //
 // REGISTERED in the schema barrel (`./index.ts`, and the pg mirror in `./pg/index.ts`) with migration
 // `migrations/{sqlite,pg}/0019_copilot_chats.sql` in the SAME change (the schema↔migration coverage detector).

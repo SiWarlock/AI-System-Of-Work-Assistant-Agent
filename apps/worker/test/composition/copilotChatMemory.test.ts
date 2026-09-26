@@ -8,6 +8,7 @@ import { ok, err, isOk } from "@sow/contracts";
 import type { UiSafeCopilotAnswer } from "@sow/contracts";
 import { createSqliteCopilotChatRepository, type CopilotChatRepository } from "@sow/db/repositories/copilotChats";
 import { createCopilotChatMemory } from "../../src/composition/copilotChatMemory";
+import { encodeSavedAnswer } from "../../src/api/procedures/copilotChatHistory";
 
 const WS = "employer-work";
 const answer: UiSafeCopilotAnswer = { answer: ["It loops."], citations: [{ citationId: "gbrain:n1", title: "Note" }], egressProcessor: "claude" };
@@ -26,7 +27,9 @@ describe("createCopilotChatMemory — the ask's chat memory over the saved-chats
     expect(await mem.recent(WS, "chat-1", 10)).toEqual([]); // a new chat has no history
     await mem.save({ workspaceId: WS, chatId: "chat-1", question: `What is${String.fromCharCode(10)}the login bug?`, answer });
     const turns = await mem.recent(WS, "chat-1", 10);
-    expect(turns).toEqual([{ question: `What is${String.fromCharCode(10)}the login bug?`, answer: JSON.stringify(answer) }]);
+    // ⛔ 9.25: saved with an EXPLICIT disclosure beside the answer, so a restore never reads a missing notice as "none".
+    expect(turns).toEqual([{ question: `What is${String.fromCharCode(10)}the login bug?`, answer: encodeSavedAnswer(answer) }]);
+    expect(JSON.parse(turns[0]?.answer ?? "{}").disclosure).toEqual({ kind: "processor", value: "claude" });
     const chat = await repo.getChat(WS, "chat-1");
     expect(isOk(chat) && [chat.value.title, chat.value.createdAt]).toEqual(["What is the login bug?", "2026-09-25T10:00:00.000Z"]);
   });

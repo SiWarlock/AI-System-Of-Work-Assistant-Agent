@@ -9,12 +9,15 @@
 //   • SAME chat, SAME workspace — the caller reads the turns by (workspaceId, chatId) (WS-8);
 //   • only the question and the answer LINES as they passed the UI-safe gate — never citations, the egress notice,
 //     tool results or retrieved passages;
-//   • bounded — whole turns, newest first, at most COPILOT_HISTORY_MAX_TURNS and COPILOT_HISTORY_MAX_CHARS;
+//   • bounded — whole turns, newest first, at most COPILOT_HISTORY_MAX_TURNS and COPILOT_HISTORY_MAX_CHARS of text
+//     (JSON escaping can make the rendered block larger — up to about twice, for text full of quotes or backslashes);
 //   • one JSON string per message, the role set by the WORKER — an earlier answer cannot forge an "Owner:" line, a
 //     passage header or a "Question:" line;
-//   • invisible characters removed first (bidi, zero-width, tag block, variation selectors, control characters).
+//   • invisible characters removed first: every Unicode default-ignorable code point (bidi controls, zero-width
+//     characters, the tag block, variation selectors, fillers…), the annotation marks, and control characters.
 // History is NEVER a source: it is not in RetrievedContext, never cited, and never counted toward content trust.
 import { UiSafeCopilotAnswerSchema, collapseToSummaryLine } from "@sow/contracts";
+import type { UiSafeCopilotAnswer } from "@sow/contracts";
 
 export type CopilotHistoryRole = "owner" | "copilot";
 export interface CopilotHistoryMessage {
@@ -29,8 +32,10 @@ export const NO_HISTORY: CopilotHistory = Object.freeze([]);
 /** The most earlier turns (one question + its answer) given to the model. */
 export const COPILOT_HISTORY_MAX_TURNS = 10;
 /**
- * The most characters of earlier turns given to the model. Larger than the largest single turn (a 4,000-character
- * question + 40 answer lines of 1,024), so the NEWEST turn always fits whole — "file it in Core?" is never lost.
+ * The most characters of earlier-turn TEXT given to the model (counted before JSON escaping, which can roughly double
+ * what the model receives for text full of quotes or backslashes). Larger than the largest single turn (a
+ * 4,000-character question + 40 answer lines of 1,024), so the NEWEST turn always fits whole — "file it in Core?" is
+ * never lost.
  */
 export const COPILOT_HISTORY_MAX_CHARS = 48_000;
 /** The longest chat title, in characters. */
@@ -43,20 +48,32 @@ function isOtherLineBreak(cp: number): boolean {
   return cp === 0x0b || cp === 0x0c || cp === 0x85 || cp === 0x2028 || cp === 0x2029;
 }
 
-/** A character the owner cannot see but the model reads. Tab and LF are kept. */
+/**
+ * A character the owner cannot see but the model reads. Tab and LF are kept. This is the Unicode
+ * Default_Ignorable_Code_Point set (review 2026-09-25: the first cut listed only some of it), plus control characters
+ * and the interlinear annotation marks U+FFF9–FFFB.
+ */
 function isInvisible(cp: number): boolean {
   return (
     (cp < 0x20 && cp !== 0x09 && cp !== 0x0a) || // C0 controls (incl. CR)
     (cp >= 0x7f && cp <= 0x9f) || // DEL + C1 controls
+    cp === 0x00ad || // soft hyphen
+    cp === 0x034f || // combining grapheme joiner
     cp === 0x061c || // Arabic letter mark
+    (cp >= 0x115f && cp <= 0x1160) || // Hangul choseong/jungseong fillers
+    (cp >= 0x17b4 && cp <= 0x17b5) || // Khmer inherent vowels
+    (cp >= 0x180b && cp <= 0x180f) || // Mongolian free variation selectors + vowel separator
     (cp >= 0x200b && cp <= 0x200f) || // zero-width space/joiners, LRM/RLM
     (cp >= 0x202a && cp <= 0x202e) || // bidi embeddings/overrides
-    (cp >= 0x2060 && cp <= 0x2064) || // word joiner, invisible operators
-    (cp >= 0x2066 && cp <= 0x2069) || // bidi isolates
-    cp === 0xfeff || // zero-width no-break space
+    (cp >= 0x2060 && cp <= 0x206f) || // word joiner, invisible operators, bidi isolates, deprecated format chars
+    cp === 0x3164 || // Hangul filler
     (cp >= 0xfe00 && cp <= 0xfe0f) || // variation selectors
-    (cp >= 0xe0000 && cp <= 0xe007f) || // the tag block
-    (cp >= 0xe0100 && cp <= 0xe01ef) // variation selectors supplement
+    cp === 0xfeff || // zero-width no-break space
+    cp === 0xffa0 || // halfwidth Hangul filler
+    (cp >= 0xfff0 && cp <= 0xfffb) || // unassigned specials + interlinear annotation marks
+    (cp >= 0x1bca0 && cp <= 0x1bca3) || // shorthand format controls
+    (cp >= 0x1d173 && cp <= 0x1d17a) || // musical symbol format controls
+    (cp >= 0xe0000 && cp <= 0xe0fff) // tags, variation selectors supplement, and the rest of the ignorable plane block
   );
 }
 
@@ -77,11 +94,42 @@ export interface StoredChatTurn {
   readonly answer: string;
 }
 
-/** The answer LINES of a stored gated answer — `undefined` if it is not a valid UI-safe answer. */
-function answerLinesOf(json: string): readonly string[] | undefined {
+/** A saved answer's EXPLICIT disclosure state (task 9.25): the cloud processor that made it, or none. */
+export type SavedDisclosure = { readonly kind: "none" } | { readonly kind: "processor"; readonly value: string };
+
+/**
+ * Encode an answer for the chat store (task 9.25, rule 5): the gated answer AND an explicit disclosure state beside
+ * it, derived here from the answer the gate produced (its `egressProcessor` is present exactly when the gate's REQUIRED
+ * notice named a processor). A restore then never has to read a MISSING notice as "nothing to disclose".
+ */
+export function encodeSavedAnswer(answer: UiSafeCopilotAnswer): string {
+  const disclosure: SavedDisclosure =
+    answer.egressProcessor !== undefined ? { kind: "processor", value: answer.egressProcessor } : { kind: "none" };
+  return JSON.stringify({ answer, disclosure });
+}
+
+function isDisclosure(v: unknown): v is SavedDisclosure {
+  if (typeof v !== "object" || v === null) return false;
+  const keys = Object.keys(v).sort().join(",");
+  const d = v as { kind?: unknown; value?: unknown };
+  return (keys === "kind" && d.kind === "none") || (keys === "kind,value" && d.kind === "processor" && typeof d.value === "string");
+}
+
+/**
+ * Decode a saved answer. ⛔ Task 9.25: `undefined` — the turn is neither restored nor used as history — unless it is
+ * exactly `{answer, disclosure}`, the answer passes the answer contract, and the disclosure AGREES with it (a
+ * processor ⇔ the answer names that processor). A saved cloud answer whose notice went missing is never served.
+ */
+export function decodeSavedAnswer(json: string): UiSafeCopilotAnswer | undefined {
   try {
-    const parsed = UiSafeCopilotAnswerSchema.safeParse(JSON.parse(json));
-    return parsed.success ? parsed.data.answer : undefined;
+    const raw: unknown = JSON.parse(json);
+    if (typeof raw !== "object" || raw === null || Object.keys(raw).sort().join(",") !== "answer,disclosure") return undefined;
+    const { answer, disclosure } = raw as { answer: unknown; disclosure: unknown };
+    const parsed = UiSafeCopilotAnswerSchema.safeParse(answer);
+    if (!parsed.success || !isDisclosure(disclosure)) return undefined;
+    const named = parsed.data.egressProcessor;
+    const agrees = disclosure.kind === "none" ? named === undefined : named === disclosure.value;
+    return agrees ? parsed.data : undefined;
   } catch {
     return undefined;
   }
@@ -97,7 +145,7 @@ export function historyFromTurns(turns: readonly StoredChatTurn[]): CopilotHisto
   let used = 0;
   for (let i = turns.length - 1; i >= 0 && kept.length < COPILOT_HISTORY_MAX_TURNS; i--) {
     const t = turns[i];
-    const lines = t === undefined ? undefined : answerLinesOf(t.answer);
+    const lines = t === undefined ? undefined : decodeSavedAnswer(t.answer)?.answer;
     if (t === undefined || lines === undefined) break;
     const question = sanitizeHistoryText(t.question);
     const answer = sanitizeHistoryText(lines.join(NL));
@@ -136,13 +184,15 @@ export function chatTitleOf(question: string): string {
 }
 
 /**
- * What a follow-up searches for (owner decision 2026-09-25): the owner's PREVIOUS question plus the new one — never a
- * Copilot answer — so a short reply like "Core" finds the same passages again. No history ⇒ the question alone.
+ * The owner's PREVIOUS question — the latest owner message, never a Copilot answer — which a follow-up ALSO searches
+ * for (owner decision 2026-09-25), so a short reply like "Core" finds the same passages again. The ask runs it as a
+ * SEPARATE search and merges the results (review 2026-09-25: joined into one query, gbrain's keyword search required
+ * every word of both). `undefined` ⇒ no history.
  */
-export function retrievalQueryOf(question: string, history: CopilotHistory): string {
+export function previousOwnerQuestion(history: CopilotHistory): string | undefined {
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i];
-    if (m?.role === "owner") return `${m.text}${NL}${question}`;
+    if (m?.role === "owner") return m.text;
   }
-  return question;
+  return undefined;
 }

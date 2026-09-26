@@ -41,7 +41,7 @@ import {
   COPILOT_HISTORY_MAX_TURNS,
   NO_HISTORY,
   historyFromTurns,
-  retrievalQueryOf,
+  previousOwnerQuestion,
   type CopilotHistory,
   type StoredChatTurn,
 } from "./copilotChatHistory";
@@ -430,9 +430,10 @@ export function createStubSynthesis(): CopilotSynthesisPort {
 // ── A4 — the ask orchestration + the candidate-data / UI-safe gate ──────────────
 //
 // `query.copilotAsk` calls `answerCopilotQuestion` behind the 8.1 auth gate. The orchestration writes NOTHING external
-// and NO Markdown (§4.6, §13); its ONE side effect (Linear slice 5b.4b) is saving an answered turn to the asked
-// workspace's local chat store when the ask names a chat. It fails CLOSED at every step (unknown workspace,
-// scope mismatch, synthesis failure, gate rejection). The redaction/validation boundary lives HERE
+// and NO Markdown (§4.6, §13). Its local writes: a durable denial AuditRecord when the veto or admission denies (24.7);
+// on a propose-granted agent job, the pending proposal the model files (an Approval + its saved action); and, since
+// Linear slice 5b.4b, an answered turn saved to the asked workspace's local chat store when the ask names a chat. It
+// fails CLOSED at every step (unknown workspace, scope mismatch, synthesis failure, gate rejection). The redaction/validation boundary lives HERE
 // (the procedure), mirroring the sibling read procedures: the ports hand back candidate data, and
 // `toUiSafeCopilotAnswer` is the ONE place a candidate becomes servable UI-safe data.
 
@@ -575,9 +576,9 @@ export function toUiSafeCopilotAnswer(
 /**
  * The Copilot ask orchestration (§4.6): retrieve workspace-scoped context → RE-ENFORCE the WS-8 scope guard
  * (defense-in-depth over ANY adapter) → synthesize a candidate → project + validate → `UiSafeCopilotAnswer`. Any
- * step's typed err short-circuits (fail-closed). No external write and no Markdown write: an implied action would
- * become a ProposedAction routed to Approvals. The ONE side effect (slice 5b.4b): an answered ask that names a chat
- * saves the turn to that workspace's local chat store.
+ * step's typed err short-circuits (fail-closed). No external write and no Markdown write: an implied action becomes
+ * a ProposedAction routed to Approvals. Local writes: the denial audit (24.7), a propose job's pending proposal, and
+ * (slice 5b.4b) the answered turn, saved to that workspace's local chat store when the ask names a chat.
  *
  * EGRESS DECISION (safety rule 5, P1.2b): the AUTHORITATIVE Workspace posture is resolved by
  * `input.workspaceId` SERVER-SIDE (never from client input — `CopilotAskInput` carries no posture),
@@ -592,23 +593,58 @@ export async function answerCopilotQuestion(
   input: CopilotAskInput,
 ): Promise<Result<UiSafeCopilotAnswer, FailureVariant>> {
   // Linear slice 5b.4b — chat memory. ⛔ Read by THIS request's workspaceId (rule 4). The history reaches synthesis
-  // only, after the veto (rule 5); a follow-up searches the owner's PREVIOUS question plus the new one (owner decision).
+  // only, after the veto (rule 5).
   const chatId = input.chatId;
   const memory = chatId !== undefined ? deps.chats : undefined;
   const history: CopilotHistory =
     memory !== undefined && chatId !== undefined
       ? historyFromTurns(await memory.recent(input.workspaceId, chatId, COPILOT_HISTORY_MAX_TURNS))
       : NO_HISTORY;
-  const retrieved = await deps.retrieval.retrieve(input.workspaceId, retrievalQueryOf(input.question, history));
+  const retrieved = await deps.retrieval.retrieve(input.workspaceId, input.question);
   if (!isOk(retrieved)) return retrieved;
   const scoped = enforceRetrievalScope(input.workspaceId, retrieved.value);
   if (!isOk(scoped)) return scoped;
-  const answered = await runGovernedCopilotSynthesis(deps, input.workspaceId, input.question, scoped.value, history);
+  // A follow-up ALSO searches the owner's PREVIOUS question (owner decision 2026-09-25) — a SEPARATE search, merged by
+  // citation (review 2026-09-25: one joined query required every word of both in gbrain's keyword arm). That text
+  // already went through this same retrieval in the earlier ask. The extra search is best-effort: if it fails, the ask
+  // answers from the new question's search alone — but a context scoped to ANOTHER workspace still fails it closed.
+  let context = scoped.value;
+  const previous = previousOwnerQuestion(history);
+  if (previous !== undefined) {
+    const extra = await deps.retrieval.retrieve(input.workspaceId, previous);
+    if (isOk(extra)) {
+      const extraScoped = enforceRetrievalScope(input.workspaceId, extra.value);
+      if (!isOk(extraScoped)) return extraScoped;
+      context = mergeRetrievedContexts(context, extraScoped.value);
+    }
+  }
+  const answered = await runGovernedCopilotSynthesis(deps, input.workspaceId, input.question, context, history);
   // Only an answer that passed the UI-safe gate is saved — a denied, failed or rejected ask saves nothing.
   if (isOk(answered) && memory !== undefined && chatId !== undefined) {
     await memory.save({ workspaceId: input.workspaceId, chatId, question: input.question, answer: answered.value });
   }
   return answered;
+}
+
+/**
+ * Merge a second search's passages into the first (Linear slice 5b.4b): the first context's passages, then each of the
+ * second's whose citation is new — every passage still paired with its own source. A first context whose blocks and
+ * sources are not aligned is returned unchanged (appending would misalign them). Both contexts are the same
+ * workspace's (the caller scope-checked each). Pure.
+ */
+export function mergeRetrievedContexts(first: RetrievedContext, second: RetrievedContext): RetrievedContext {
+  if (first.blocks.length !== first.sources.length) return first;
+  const seen = new Set(first.sources.map((src) => src.citationId));
+  const sources = [...first.sources];
+  const blocks = [...first.blocks];
+  second.sources.forEach((src, i) => {
+    const block = second.blocks[i];
+    if (block === undefined || seen.has(src.citationId)) return;
+    seen.add(src.citationId);
+    sources.push(src);
+    blocks.push(block);
+  });
+  return { workspaceId: first.workspaceId, blocks, sources };
 }
 
 /**
