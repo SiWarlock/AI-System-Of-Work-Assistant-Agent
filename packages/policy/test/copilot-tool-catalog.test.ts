@@ -584,4 +584,10 @@ describe("copilot.propose_linear_issue — the Copilot's Linear filing tool (sli
     const r = admitJob(job(policy, "untrusted"), isMutatingCopilotTool);
     expect(isDeny(r)).toBe(true);
   });
+  it("⛔ ING-7: a READ-ONLY policy that secretly lists it is impure — this is the check that depends on it being MUTATING", () => {
+    // Review 2026-09-25: the test above denies ANY untrusted scoped_write job, whatever its tools, so it would pass even
+    // if this tool were cataloged non-mutating. The read-only purity clause is the per-tool guard (C4 admission).
+    const policy = { mode: "read_only" as const, allowedTools: [COPILOT_PROPOSE_LINEAR_TOOL.id], deniedTools: [], allowsMutating: false };
+    expect(copilotReadOnlyPolicyIsPure(policy)).toBe(false);
+  });
 });

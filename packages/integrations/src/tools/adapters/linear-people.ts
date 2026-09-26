@@ -7,7 +7,9 @@
 //
 // Grounded on Linear's docs via Context7 (2026-09-25): `viewer { id name }`; `users(first, after)` with Relay pagination.
 // The filter input's fields were not confirmed there, so this does not depend on them: it pages the member list, bounded
-// at LINEAR_MEMBERS_MAX_PAGES, reading EVERY page up to that cap so a same-named member on a later page is still caught.
+// at LINEAR_MEMBERS_MAX_PAGES, reading EVERY page so a same-named member on a later page is still caught. A match is
+// used only when the WHOLE list was read: past the cap (or a page that says "more" with no cursor), a same-named person
+// could be unread, so the answer is `too_many_members` even with one match (review 2026-09-25, measured).
 //
 // ⭐ ONE GUARDED PIPELINE, like the teams reader: `guardedHttpExchange` (SSRF guard, workspace-scoped key read that fails
 // closed, key in the header only, no redirects, positive-2xx gate, parsed body never echoed), with the Linear write
@@ -36,7 +38,10 @@ export type LinearMemberMatch =
 export interface LinearPeopleReader {
   /** The key's own Linear user — the default assignee. */
   readonly viewer: (workspaceId: string) => Promise<LinearViewerRead>;
-  /** The ONE active member whose full name, display name or email equals `name` (ignoring case and outer spaces). */
+  /**
+   * The ONE active member whose full name, display name or email equals `name` (ignoring case and outer spaces) — found
+   * in a list read to its END. Two matches ⇒ `ambiguous`; an unfinished list ⇒ `too_many_members`, even with one match.
+   */
   readonly findMember: (workspaceId: string, name: string) => Promise<LinearMemberMatch>;
 }
 
@@ -107,6 +112,7 @@ export function createLinearPeopleReader(deps: WriteHttpTransportDeps): LinearPe
         const found: LinearPerson[] = [];
         let after: string | null = null;
         let more = true;
+        let incomplete = false;
         for (let page = 0; page < LINEAR_MEMBERS_MAX_PAGES && more; page++) {
           const d = dataOf(await exchange(deps, workspaceId, JSON.stringify({ query: MEMBERS_QUERY, variables: { first: LINEAR_MEMBERS_PAGE, after } })));
           if (!d.ok) return d;
@@ -117,13 +123,16 @@ export function createLinearPeopleReader(deps: WriteHttpTransportDeps): LinearPe
             if (typeof u?.id !== "string" || typeof u.name !== "string" || u.active === false) continue;
             if ([u.name, u.displayName, u.email].some((f) => norm(f) === wanted)) found.push({ id: u.id, name: u.name });
           }
-          more = users.pageInfo?.hasNextPage === true && typeof users.pageInfo.endCursor === "string";
+          const hasNext = users.pageInfo?.hasNextPage === true;
+          more = hasNext && typeof users.pageInfo?.endCursor === "string";
+          if (hasNext && !more) incomplete = true; // "more" with no cursor: the rest cannot be read
           after = more ? (users.pageInfo?.endCursor as string) : null;
         }
+        if (more) incomplete = true; // stopped at the cap with pages left
         if (found.length > 1) return { ok: false, reason: "ambiguous" };
+        if (incomplete) return { ok: false, reason: "too_many_members" };
         const only = found[0];
-        if (only !== undefined) return { ok: true, user: only };
-        return { ok: false, reason: more ? "too_many_members" : "not_found" };
+        return only !== undefined ? { ok: true, user: only } : { ok: false, reason: "not_found" };
       } catch {
         return { ok: false, reason: "malformed" };
       }

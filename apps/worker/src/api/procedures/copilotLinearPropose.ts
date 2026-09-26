@@ -7,6 +7,9 @@
 //     EXCEPTION TO SAFETY RULE 6 (ING-7: an agent that reads imported content must be read-only): Linear team names
 //     are imported content and this job holds a write-capable tool. It is kept NARROW — team NAMES only (never ids),
 //     one line each, at most 100 — and it is bounded by the human gate: every card still needs the owner's Approve.
+//     The owner confirmed on 2026-09-25 that the list is ALSO given when the named team is not found or matches two.
+//     ⛔ Nothing else Linear returns goes back to the model: not an id, and not the assignee's name (review 2026-09-25 —
+//     a member's Linear name is text that member controls; the card's Details show it to the owner instead).
 //   • ASSIGNEE — "you, or who you name": the key's own user by default; a named person is matched EXACTLY against the
 //     Linear members, in the worker. No member list is ever sent to the model.
 //   • PRIORITY and DUE DATE — only if the owner stated them (the prompt says so; the card shows them before Approve).
@@ -91,17 +94,20 @@ function refuse(code: string, detail = ""): CopilotProposeToolResult {
 
 /**
  * The team NAMES the owner may choose from — ⛔ the rule-6 exception (owner, 2026-09-25): names only, never ids, each
- * collapsed onto one line, at most {@link MAX_LISTED_TEAMS}.
+ * collapsed onto one line, at most {@link MAX_LISTED_TEAMS}. A list that is not the whole list says so (never a silent cap).
  */
-function teamNames(teams: readonly { readonly name: string }[]): string {
-  const names = teams
-    .slice(0, MAX_LISTED_TEAMS)
-    .map((t) => collapseToSummaryLine(t.name))
-    .filter((n) => n.length > 0);
-  return names.map((n) => `"${n}"`).join(", ");
+function teamNames(teams: readonly { readonly name: string }[], hasMore: boolean): string {
+  const shown = teams.slice(0, MAX_LISTED_TEAMS);
+  const names = shown.map((t) => collapseToSummaryLine(t.name)).filter((n) => n.length > 0);
+  const partial = hasMore || teams.length > shown.length;
+  const note = partial
+    ? ` (This is only the first ${String(shown.length)} of this workspace's teams; the owner can check the exact name or use the New Linear issue form.)`
+    : "";
+  return names.map((n) => `"${n}"`).join(", ") + note;
 }
 
-const norm = (s: string): string => s.trim().toLowerCase();
+/** One name, compared the way it is LISTED: whitespace collapsed (like the list), then case ignored. */
+const norm = (s: string): string => collapseToSummaryLine(s).toLowerCase();
 
 async function readBack(approvals: ApprovalRepository, ref: string): Promise<Approval | undefined> {
   try {
@@ -113,9 +119,9 @@ async function readBack(approvals: ApprovalRepository, ref: string): Promise<App
 }
 
 /**
- * Handle a `propose_linear_issue` call. Fail-safe (never throws) and redaction-safe: the model sees a bounded code, the
- * team NAMES under the rule-6 exception, and the names of the resolved team and assignee — never ids, keys or raw
- * content it did not already send.
+ * Handle a `propose_linear_issue` call. Fail-safe (never throws) and redaction-safe: the model sees a bounded code and
+ * the team NAMES under the rule-6 exception (the list, and the resolved team's name) — never an id, a key, a member's
+ * name, or raw content it did not already send.
  */
 export async function handleCopilotLinearProposeToolCall(rawArgs: unknown, deps: CopilotLinearProposeDeps): Promise<CopilotProposeToolResult> {
   try {
@@ -130,13 +136,15 @@ export async function handleCopilotLinearProposeToolCall(rawArgs: unknown, deps:
         ? refuse("COPILOT_LINEAR_WRITES_OFF", "Linear writes are not on for this workspace. ")
         : refuse("COPILOT_LINEAR_TEAMS_UNAVAILABLE");
     }
-    const listed = teamNames(teams.teams);
+    const listed = teamNames(teams.teams, teams.hasMore);
     if (intent.team === undefined) {
       return refuse(
         "COPILOT_LINEAR_TEAM_REQUIRED",
         `No team was named. This workspace's Linear teams are: ${listed}. Suggest one to the owner and ask them to confirm or pick another, then call ${COPILOT_LINEAR_PROPOSE_TOOL_NAME} again with "team" set to that exact name. `,
       );
     }
+    // ⚠ Known limit: with more teams than one page (`hasMore`), a same-named team past it cannot be seen. Linear team
+    // names are in practice unique, and the card shows the team for the owner to check before Approve.
     const matches = teams.teams.filter((t) => norm(t.name) === norm(intent.team ?? ""));
     if (matches.length === 0) return refuse("COPILOT_LINEAR_TEAM_NOT_FOUND", `The teams are: ${listed}. `);
     if (matches.length > 1) return refuse("COPILOT_LINEAR_TEAM_AMBIGUOUS", `The teams are: ${listed}. `);
@@ -175,7 +183,8 @@ export async function handleCopilotLinearProposeToolCall(rawArgs: unknown, deps:
     if (!proposed.ok) return refuse(proposed.error.cause?.code ?? proposed.error.kind);
 
     const { approvalRef, created } = proposed.value;
-    const where = `in team "${collapseToSummaryLine(team.name)}", assigned to ${collapseToSummaryLine(who.user.name)}`;
+    // ⛔ Rule 6: the team NAME is inside the owner's exception; the assignee's Linear name is not, so it never goes back.
+    const where = `in team "${collapseToSummaryLine(team.name)}", assigned to ${intent.assignee === undefined ? "the owner" : "the person the owner named"}`;
     if (created) {
       return {
         content: [

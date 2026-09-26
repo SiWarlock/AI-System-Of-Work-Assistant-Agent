@@ -18,7 +18,7 @@ import { router, publicProcedure, authedResolver } from "../router";
 export const MAX_LINEAR_TITLE = 255;
 /**
  * The longest description the form sends (Linear slice 5b.1, owner: ~250 lines). Shared with the renderer through the
- * contract, and inside the propose payload bound even when every character escapes to two once serialized.
+ * contract, and inside the propose payload bound even when every character escapes to six once serialized.
  */
 export const MAX_LINEAR_DESCRIPTION = LINEAR_DESCRIPTION_MAX;
 

@@ -33,10 +33,12 @@ export const COPILOT_PROPOSE_APPROVAL_POLICY = "requires_approval";
 
 /**
  * A generous bound on the proposal payload — an unbounded payload is a storage/render DoS surface. Measured as the
- * serialized length, so it must hold a Linear description at its limit (`LINEAR_DESCRIPTION_MAX`, 20,000) whose every character escapes to two
- * (Linear slice 5b.1 raised it from 16 KiB, which a long form description could exceed).
+ * serialized length, so it must hold a Linear description at its limit (`LINEAR_DESCRIPTION_MAX`, 20,000) whose every
+ * character escapes to SIX — JSON writes a control character or a lone surrogate as a 6-character escape (120,000),
+ * plus the title and the names. Slice 5b.1 raised it from 16 KiB to 64 KiB on a two-per-character estimate; the review
+ * of 2026-09-25 measured that estimate as wrong, so it is 128 KiB.
  */
-export const MAX_PROPOSE_PAYLOAD_CHARS = 64 * 1024;
+export const MAX_PROPOSE_PAYLOAD_CHARS = 128 * 1024;
 
 /**
  * The model's propose INTENT — the ONLY thing the model supplies. UNTRUSTED (model output), so it is shape-

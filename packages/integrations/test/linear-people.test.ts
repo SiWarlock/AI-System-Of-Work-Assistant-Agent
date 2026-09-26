@@ -101,19 +101,36 @@ describe("findMember — the EXACT person the owner named (ignoring case and out
     expect(await createLinearPeopleReader({ http: linear(spread).http, secrets: keychain() }).findMember(WS, "Dana Fox")).toEqual({ ok: false, reason: "ambiguous" });
   });
 
-  it("pages through the members, and says so when it had to stop before the end", async () => {
-    const many = Array.from({ length: LINEAR_MEMBERS_PAGE * LINEAR_MEMBERS_MAX_PAGES + 5 }, (_, i) => ({ id: `u${i}`, name: `Person ${i}` }));
-    const r1 = linear(many);
+  it("pages through the members to the END of the list — every page, not just to the first match", async () => {
+    const some = Array.from({ length: LINEAR_MEMBERS_PAGE * 2 + 10 }, (_, i) => ({ id: `u${i}`, name: `Person ${i}` }));
+    const r1 = linear(some);
     expect(await createLinearPeopleReader({ http: r1.http, secrets: keychain() }).findMember(WS, `Person ${LINEAR_MEMBERS_PAGE + 3}`)).toEqual({
       ok: true,
       user: { id: `u${LINEAR_MEMBERS_PAGE + 3}`, name: `Person ${LINEAR_MEMBERS_PAGE + 3}` },
     });
-    // It reads EVERY page up to the cap, not just to the first match — otherwise a same-named member on a later page
-    // could never be seen, and "ambiguous" could not be told apart from a unique match.
-    expect(r1.calls).toHaveLength(LINEAR_MEMBERS_MAX_PAGES);
+    // It reads EVERY page, not just to the first match — otherwise a same-named member on a later page could never be
+    // seen, and "ambiguous" could not be told apart from a unique match.
+    expect(r1.calls).toHaveLength(3);
+  });
+
+  it("⛔ a list longer than the cap is 'too_many_members' — even with ONE match, since a same-named person may be unread", async () => {
+    // Review 2026-09-25 (measured): the cap is 4 x 250; a second "Dana Fox" past it was never seen, and the first one
+    // was returned as if unique. The card shows only a name, so the owner could not tell (REQ-F-017).
+    const cap = LINEAR_MEMBERS_PAGE * LINEAR_MEMBERS_MAX_PAGES;
+    const many = Array.from({ length: cap + 5 }, (_, i) => ({ id: `u${i}`, name: i === 3 || i === cap + 2 ? "Dana Fox" : `Person ${i}` }));
+    const r1 = linear(many);
+    expect(await createLinearPeopleReader({ http: r1.http, secrets: keychain() }).findMember(WS, "Dana Fox")).toEqual({ ok: false, reason: "too_many_members" });
+    expect(r1.calls).toHaveLength(LINEAR_MEMBERS_MAX_PAGES); // bounded — never an unbounded crawl
     const r2 = linear(many);
     expect(await createLinearPeopleReader({ http: r2.http, secrets: keychain() }).findMember(WS, "Nobody Here")).toEqual({ ok: false, reason: "too_many_members" });
-    expect(r2.calls).toHaveLength(LINEAR_MEMBERS_MAX_PAGES); // bounded — never an unbounded crawl
+  });
+
+  it("⛔ a page that says 'more' but gives no cursor is an INCOMPLETE list — never read as the end", async () => {
+    const page = { data: { users: { nodes: [{ id: "u1", name: "Dana Fox", active: true }], pageInfo: { hasNextPage: true, endCursor: null } } } };
+    const http: HttpTransport = { send: async () => ({ status: 200, body: JSON.stringify(page) }) };
+    const r = createLinearPeopleReader({ http, secrets: keychain() });
+    expect(await r.findMember(WS, "Dana Fox")).toEqual({ ok: false, reason: "too_many_members" });
+    expect(await r.findMember(WS, "Nobody Here")).toEqual({ ok: false, reason: "too_many_members" });
   });
 
   it("a blank name matches nobody, with ZERO network calls", async () => {

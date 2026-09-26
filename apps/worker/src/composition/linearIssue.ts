@@ -13,7 +13,8 @@
 // sent that is not in it is refused. The team NAME saved on the action is that list's, never the form's.
 // ⛔ Rule 3 keys: neither key builder folds a workspace, so the identity carries it — `{ workspace, draft }`, where the
 // draft id is minted by the form on open. A double submit is one card; two issues never collide, even with one title.
-// ⛔ REQ-F-017: the payload carries no owner and no date (and the Linear sender would drop them anyway).
+// ⛔ REQ-F-017: the form's payload carries no owner and no date. (Since slice 5b.2 the Linear sender DOES send a
+// well-formed assigneeId/dueDate from an approved payload, so this file is the only guard: never add one here unresolved.)
 import { ok, err, failure, isOk } from "@sow/contracts";
 import type { FailureVariant, Result, UiSafeLinearProposalResult, UiSafeLinearTeamList, WorkspaceId, Approval } from "@sow/contracts";
 import type { ApprovalRepository, WorkspaceConfigRepository } from "@sow/db";
@@ -29,7 +30,7 @@ export const LINEAR_FORM_ACTOR = "owner-form";
  * The actor recorded on a Linear card the COPILOT proposed through the worker's own Linear path (slice 5b.3), which
  * builds the payload from worker-resolved values only (team, assignee) — unlike the generic propose tool, whose
  * payload is model-written (`copilot-agent`, closed for Linear since slice 5b.2). Set by the sink's config, never by a
- * payload. ⚠ No sink uses it until slice 5b.3.
+ * payload — the sink boot builds for the Copilot's Linear path (slice 5b.3b).
  */
 export const LINEAR_COPILOT_ACTOR = "copilot-linear";
 

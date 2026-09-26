@@ -107,4 +107,13 @@ describe("buildCopilotLinearProposeToolDefinition — the propose_linear_issue t
     expect(createCopilotProposeMcpServer(okHandler).name).toBe("copilot");
     expect(createCopilotProposeMcpServer(okHandler, okHandler).name).toBe("copilot");
   });
+
+  it("the REAL server holds exactly those tools (review 2026-09-25: the helper alone proved nothing about the server)", () => {
+    // Reads the MCP server's registered tools. `_registeredTools` is the SDK's own map (@modelcontextprotocol/sdk
+    // McpServer); if an SDK upgrade renames it, this test fails loudly rather than passing on an empty list.
+    const toolsOf = (s: ReturnType<typeof createCopilotProposeMcpServer>): string[] =>
+      Object.keys((s.instance as unknown as { _registeredTools: Record<string, unknown> })._registeredTools).sort();
+    expect(toolsOf(createCopilotProposeMcpServer(okHandler))).toEqual(["propose_action"]);
+    expect(toolsOf(createCopilotProposeMcpServer(okHandler, okHandler))).toEqual(["propose_action", "propose_linear_issue"]);
+  });
 });

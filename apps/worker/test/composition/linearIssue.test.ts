@@ -10,7 +10,7 @@ import { ok, err, failure } from "@sow/contracts";
 import type { Approval, FailureVariant, ProposedAction, ExternalWriteEnvelope, Result, Workspace } from "@sow/contracts";
 import type { ApprovalRepository, WorkspaceConfigRepository, DbError } from "@sow/db";
 import { createLinearIssuePort, LINEAR_FORM_ACTOR } from "../../src/composition/linearIssue";
-import type { CopilotProposeSink, CopilotProposeReceipt } from "../../src/api/procedures/copilotPropose";
+import { MAX_PROPOSE_PAYLOAD_CHARS, type CopilotProposeSink, type CopilotProposeReceipt } from "../../src/api/procedures/copilotPropose";
 import type { LinearTeamsOutcome } from "../../src/composition/backends";
 
 const WS = "employer-work";
@@ -192,15 +192,17 @@ describe("propose — one Linear issue from the form, as a PENDING card that sti
 
   it("a payload over the propose bound is 'invalid_input' and never reaches the sink", async () => {
     const s = sink();
-    // Each quote escapes to two characters once serialized: 40 000 of them is over the 64 KiB bound.
-    expect(await port({ sink: s }).p.propose({ ...FORM, description: '"'.repeat(40000) })).toEqual(ok({ outcome: "invalid_input" }));
+    // Each quote escapes to two characters once serialized, so this many is twice the bound (the port is called
+    // directly here, past the router's own 20,000-character check).
+    expect(await port({ sink: s }).p.propose({ ...FORM, description: '"'.repeat(MAX_PROPOSE_PAYLOAD_CHARS) })).toEqual(ok({ outcome: "invalid_input" }));
     expect(s.calls).toHaveLength(0);
   });
 
   it("⛔ the LONGEST description the form allows is never refused by the propose bound, even at worst-case escaping", async () => {
-    // Linear slice 5b.1: the payload bound must fit the 20,000-character limit when every character escapes to two.
+    // The payload bound must fit the 20,000-character limit when every character escapes to SIX (a control character
+    // serializes as a 6-character escape; the review of 2026-09-25 measured the old two-per-character claim as wrong).
     const s = sink();
-    expect(await port({ sink: s }).p.propose({ ...FORM, description: '"'.repeat(20000) })).toEqual(
+    expect(await port({ sink: s }).p.propose({ ...FORM, description: String.fromCharCode(1).repeat(20000) })).toEqual(
       ok(expect.objectContaining({ outcome: "created" })),
     );
     expect(s.calls).toHaveLength(1);

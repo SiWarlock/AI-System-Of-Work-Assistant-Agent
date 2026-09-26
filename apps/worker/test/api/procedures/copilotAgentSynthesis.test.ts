@@ -45,6 +45,7 @@ import {
   mapAgentResultToCandidate,
   buildCopilotAgentPrompt,
   COPILOT_AGENT_SYSTEM_PROMPT,
+  COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT,
   createAgentRuntimeCopilotSynthesis,
   createClaudeAgentCopilotRunner,
   deriveCopilotContentTrust,
@@ -1383,6 +1384,9 @@ describe("createClaudeAgentCopilotRunner — §13.10a propose_knowledge grant (S
     expect(opts["allowedTools"]).not.toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
     const servers = opts["mcpServers"] as Record<string, unknown>;
     expect(servers["copilot"]).toBeDefined(); // the G3 server registered under the shared name
+    // ⛔ A knowledge-propose job does NOT hold the external propose tools, so it keeps the read-only system prompt
+    // byte-for-byte (review 2026-09-25: this was unpinned — a mutant giving it the external propose prompt survived).
+    expect(opts["systemPrompt"]).toBe(COPILOT_AGENT_SYSTEM_PROMPT);
   });
 
   it("does NOT grant propose_knowledge when the knowledge deps are absent (fail-closed)", async () => {
@@ -1497,6 +1501,34 @@ describe("createClaudeAgentCopilotRunner — propose_linear_issue (Linear slice 
     const opts = cap.seen()?.options ?? {};
     expect(opts["allowedTools"]).not.toContain(COPILOT_PROPOSE_LINEAR_MCP_TOOL_NAME);
     expect(opts["systemPrompt"]).toBe(COPILOT_AGENT_SYSTEM_PROMPT);
+  });
+
+  it("⛔ a propose job whose policy does NOT list the Linear tool never holds it, even with the deps bound", async () => {
+    // Review 2026-09-25: the runner's 'policy lists the tool' leg was unpinned (mutant survived).
+    const srv = server();
+    const without = {
+      ...proposeJob,
+      toolPolicy: { ...proposeJob.toolPolicy, allowedTools: proposeJob.toolPolicy.allowedTools.filter((t) => String(t) !== "copilot.propose_linear_issue") },
+    };
+    const { cap, done } = run(without, { proposeSink: noopSink, buildProposeMcpServer: srv.build, linearProposeDeps: linearDeps(noopSink) });
+    await done;
+    const tools = (cap.seen()?.options ?? {})["allowedTools"] as string[];
+    expect(tools).toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
+    expect(tools).not.toContain(COPILOT_PROPOSE_LINEAR_MCP_TOOL_NAME);
+    expect(srv.linear()).toBeUndefined();
+  });
+
+  it("the propose-mode prompt keeps every grounding rule of the read-only one, including 'say you could not find it'", () => {
+    // Review 2026-09-25: the docstring said "keeps every grounding rule", but this line had been dropped.
+    expect(COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT).toContain("If the answer is not in the context, say you could not find it and return no citations.");
+    for (const line of [
+      "- Ground every statement in the supplied passages. Cite each passage you rely on by its exact [citationId]",
+      "  tag, and cite ONLY passages that were supplied to you in this message.",
+      "- Never include secrets, credentials, access tokens, or raw file paths in your answer.",
+    ]) {
+      expect(COPILOT_AGENT_SYSTEM_PROMPT).toContain(line);
+      expect(COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT).toContain(line);
+    }
   });
 
   it("a propose job gets the PROPOSE-MODE prompt: act only when asked; team, assignee, priority and due date only as the owner said", async () => {
