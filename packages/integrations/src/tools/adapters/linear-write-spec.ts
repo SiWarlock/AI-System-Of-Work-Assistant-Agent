@@ -23,10 +23,14 @@
 // ⚠ An ARCHIVED issue is outside the default filter, so it probes as absent; the create then collides
 // on the same id and is refused — which fails closed rather than duplicating.
 //
-// ⛔ REQ-F-017 (never invent task owners or dates): this spec sends NO assignee and NO due date, even
-// when the payload carries them. A payload is candidate data; until slice 5 gives owner and date an
-// explicit, validated origin, dropping them is the only safe choice at the sender.
+// ⛔ REQ-F-017 (never invent task owners or dates) — AMENDED 2026-09-25 (Linear slice 5b.2, owner decision): the
+// assignee is the owner or a person the owner NAMED (resolved by the worker against the Linear members), and a due
+// date only if the owner STATED one. Both are validated where they are proposed and SHOWN on the card before Approve,
+// so the rule is kept where the values are made. This sender sends them when the APPROVED payload carries
+// well-formed ones, and drops a malformed one. ⚠ The model-facing generic propose tool is CLOSED for Linear (it could
+// otherwise put a raw assignee id in a payload); only the worker's Linear paths build a Linear payload.
 import { sha256Hex } from "@sow/domain";
+import { isCalendarDate } from "@sow/contracts";
 import type { WriteHttpSpec } from "./write-http-transport";
 import type { AdapterTransportRequest, TransportObject, TransportResponse } from "./transport";
 
@@ -55,7 +59,19 @@ function nonBlank(v: unknown): string | undefined {
   return typeof v === "string" && v.trim().length > 0 ? v : undefined;
 }
 
-/** The fields this sender will write. Owner and date are deliberately absent (REQ-F-017, above). */
+const LINE_BREAK = /[\r\n\u000B\u000C\u0085\u2028\u2029]/;
+
+/** A Linear user id as the worker resolved it: one line, ≤ 64. */
+function assigneeIdOf(v: unknown): string | undefined {
+  return typeof v === "string" && v.trim().length > 0 && v.length <= 64 && !LINE_BREAK.test(v) ? v : undefined;
+}
+
+/** A real calendar day in Linear's TimelessDate form — the SAME check the card's Details use (`isCalendarDate`). */
+function dueDateOf(v: unknown): string | undefined {
+  return isCalendarDate(v) ? v : undefined;
+}
+
+/** The fields this sender will write — each only when well-formed (the assignee and due date: see REQ-F-017 above). */
 function writableFields(p: Readonly<Record<string, unknown>>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const title = nonBlank(p["title"]);
@@ -63,6 +79,10 @@ function writableFields(p: Readonly<Record<string, unknown>>): Record<string, un
   if (typeof p["description"] === "string") out["description"] = p["description"];
   const pr = p["priority"];
   if (typeof pr === "number" && Number.isInteger(pr) && pr >= 0 && pr <= 4) out["priority"] = pr;
+  const assigneeId = assigneeIdOf(p["assigneeId"]);
+  if (assigneeId !== undefined) out["assigneeId"] = assigneeId;
+  const dueDate = dueDateOf(p["dueDate"]);
+  if (dueDate !== undefined) out["dueDate"] = dueDate;
   return out;
 }
 

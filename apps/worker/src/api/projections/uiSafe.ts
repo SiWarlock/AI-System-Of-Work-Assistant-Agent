@@ -45,6 +45,7 @@ import {
   UiSafeLinearTeamSchema,
   MAX_LINEAR_TEAMS,
   MAX_DETAIL_DESCRIPTION_LINES,
+  isCalendarDate,
 } from "@sow/contracts";
 import { permitsRawDrillDown } from "@sow/policy";
 
@@ -324,14 +325,22 @@ export interface ApprovalDetailSource {
   priority?: unknown;
   /** Linear slice 5a — the team's NAME, resolved by the worker when the form proposed the issue. Never its id. */
   teamName?: unknown;
+  /** Linear slice 5b.2 — the assignee's NAME, resolved by the worker. Never their id. */
+  assigneeName?: unknown;
+  /** Linear slice 5b.2 — an owner-stated due date; kept only if it is a real `YYYY-MM-DD` day. */
+  dueDate?: unknown;
 }
 
 /**
  * Project an {@link ApprovalDetailSource} to a {@link UiSafeApprovalDetail}. Copies ONLY the allowlisted names,
- * each explicitly — no spread, so the raw payload, a team, an assignee, a due date or a key on the source can
- * never cross. Narrows: `targetSystem` to the closed enum; `title` to ONE summary line; `description` to at most 40
- * single lines (`splitToSummaryLines`), flagging truncation. ⛔ A `refused` state carries NO content: the saved
- * action failed an integrity check, so it is not provably this card's.
+ * each explicitly — no spread, so the raw payload, a team or assignee ID, or a key on the source can never cross.
+ * Narrows: `targetSystem` to the closed enum; `title`, `teamName` and `assigneeName` to ONE summary line each;
+ * `dueDate` to a real `YYYY-MM-DD` day (else dropped); `description` to single lines — long ones WRAPPED, enough of
+ * them for a whole Linear description (`MAX_DETAIL_DESCRIPTION_LINES`), flagging truncation only past that. Which
+ * cards may carry a team, assignee or due date at all is decided upstream (the detail port's actor gate). ⛔ A
+ * `refused` state carries NO content: the saved action failed an integrity check, so it is not provably this card's.
+ * (Corrected 2026-09-25: this said "at most 40 single lines" after slice 5b.1 raised the cap, and listed "an
+ * assignee, a due date" among fields that never cross.)
  */
 export function toUiSafeApprovalDetail(src: ApprovalDetailSource): UiSafeApprovalDetail {
   const out: UiSafeApprovalDetail = { approvalId: src.approvalId, sendState: src.sendState };
@@ -355,6 +364,11 @@ export function toUiSafeApprovalDetail(src: ApprovalDetailSource): UiSafeApprova
     const teamName = collapseToSummaryLine(src.teamName);
     if (teamName.length > 0) out.teamName = teamName;
   }
+  if (typeof src.assigneeName === "string") {
+    const assigneeName = collapseToSummaryLine(src.assigneeName);
+    if (assigneeName.length > 0) out.assigneeName = assigneeName;
+  }
+  if (isCalendarDate(src.dueDate)) out.dueDate = src.dueDate;
   return out;
 }
 

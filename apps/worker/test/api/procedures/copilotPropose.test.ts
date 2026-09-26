@@ -356,3 +356,25 @@ describe("the workspace is folded into every Copilot proposal's keys (Linear sli
     expect(s1.last()?.action.idempotencyKey).not.toBe(s2.last()?.action.idempotencyKey);
   });
 });
+
+// Linear slice 5b.2: the sender now sends an assignee and a due date from an approved Linear payload. The model-facing
+// GENERIC propose tool could put a raw assignee id or any date in a payload, so it is CLOSED for Linear: only the
+// worker's own Linear paths (the form; the Copilot's Linear path, slice 5b.3) build a Linear payload.
+describe("the generic propose tool is CLOSED for Linear (Linear slice 5b.2)", () => {
+  it("refuses a Linear proposal with a bounded code, and records nothing", async () => {
+    const s = fakeSink();
+    const r = await handleCopilotProposeToolCall(
+      intent({ targetSystem: "linear", operation: "linear.create_issue", payload: { teamId: "t", title: "T", assigneeId: "u-9" } }),
+      { workspaceId: WS, sink: s.sink },
+    );
+    expect(r.isError).toBe(true);
+    expect(r.content.map((c) => c.text).join(" ")).toContain("COPILOT_PROPOSE_LINEAR_USE_LINEAR_PATH");
+    expect(s.calls()).toBe(0);
+  });
+  it("other systems are unaffected", async () => {
+    const s = fakeSink();
+    const r = await handleCopilotProposeToolCall(intent(), { workspaceId: WS, sink: s.sink });
+    expect(r.isError).toBeUndefined();
+    expect(s.calls()).toBe(1);
+  });
+});

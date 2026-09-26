@@ -8,7 +8,7 @@
 // body), so this test is what keeps them in step — malformed input included.
 import { describe, it, expect } from "vitest";
 import type { AdapterTransport } from "@sow/integrations";
-import { writeArmedFor, isWriteTransportArmed, selectAdapterTransport, linearTeamsLister, type WriteTransportGate } from "../../src/composition/backends";
+import { writeArmedFor, isWriteTransportArmed, selectAdapterTransport, linearTeamsLister, linearPeopleOf, type WriteTransportGate } from "../../src/composition/backends";
 import { TargetSystem } from "@sow/contracts";
 
 const REAL: AdapterTransport = () => Promise.resolve({ ok: true, object: null });
@@ -82,6 +82,27 @@ describe("linearTeamsLister — the gate's own lister when armed, otherwise a re
       if (g !== undefined && isWriteTransportArmed(g) && g.listLinearTeams !== undefined) continue;
       expect(l).not.toBe(lister);
       expect(await l("employer-work")).toEqual({ ok: false, reason: "not_armed_for_workspace" });
+    }
+  });
+});
+
+// Linear slice 5b.2 — the people reader backends exposes: the gate's own ONLY when armed; otherwise a refusal that
+// closes over nothing (no Linear call while writes are off — the owner's 2026-09-25 decision covers this read too).
+describe("linearPeopleOf — the gate's own people reader when armed, otherwise a refusal with no network", () => {
+  const people = {
+    viewer: async () => ({ ok: true as const, user: { id: "u", name: "U" } }),
+    findMember: async () => ({ ok: true as const, user: { id: "u", name: "U" } }),
+  };
+  it("is the gate's reader only when the gate ARMS and supplies one", () => {
+    expect(linearPeopleOf({ enabled: true, make, linearPeople: people } as WriteTransportGate)).toBe(people);
+  });
+  it("⛔ every other shape refuses both lookups", async () => {
+    for (const g of [...GATES.map(([, x]) => x), { enabled: false, make, linearPeople: people } as WriteTransportGate]) {
+      if (g !== undefined && isWriteTransportArmed(g) && g.linearPeople !== undefined) continue;
+      const p = linearPeopleOf(g);
+      expect(p).not.toBe(people);
+      expect(await p.viewer("employer-work")).toEqual({ ok: false, reason: "not_armed_for_workspace" });
+      expect(await p.findMember("employer-work", "x")).toEqual({ ok: false, reason: "not_armed_for_workspace" });
     }
   });
 });

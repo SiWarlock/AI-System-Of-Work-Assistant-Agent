@@ -201,3 +201,42 @@ describe("the armed gate's team lister (Linear slice 5a)", () => {
     }
   });
 });
+
+// Linear slice 5b.2 — the people reader (the default assignee, and a member the owner names), built in the SAME armed
+// branch as the sender and the team reader, over the same key. Owner decision 2026-09-25: "You, or who you name".
+describe("the armed gate's people reader (Linear slice 5b.2)", () => {
+  function peopleHttp(): HttpTransport & { calls: HttpTransportRequest[] } {
+    const calls: HttpTransportRequest[] = [];
+    return {
+      calls,
+      async send(r) {
+        calls.push(r);
+        const q = (JSON.parse(r.body ?? "{}") as { query: string }).query;
+        return q.includes("viewer")
+          ? { status: 200, body: JSON.stringify({ data: { viewer: { id: "u-me", name: "Owner" } } }) }
+          : { status: 200, body: JSON.stringify({ data: { users: { nodes: [{ id: "u-2", name: "Sam Lee", active: true }], pageInfo: { hasNextPage: false } } } }) };
+      },
+    };
+  }
+
+  it("reads the default assignee and finds a named member for a workspace whose key resolved", async () => {
+    const h = peopleHttp();
+    const out = await resolveLinearWriteArming({ enabled: true, secrets: keychainWith(["employer-work"]), workspaceIds: WORKSPACES, http: h });
+    if (!out.armed) throw new Error("expected armed");
+    expect(h.calls).toHaveLength(0); // arming sends nothing
+    expect(await out.gate.linearPeople?.viewer("employer-work")).toEqual({ ok: true, user: { id: "u-me", name: "Owner" } });
+    expect(await out.gate.linearPeople?.findMember("employer-work", "sam lee")).toEqual({ ok: true, user: { id: "u-2", name: "Sam Lee" } });
+  });
+
+  it("⛔ a workspace whose key did not resolve is refused with no network call and no key read", async () => {
+    const h = peopleHttp();
+    const secrets = keychainWith(["employer-work"]);
+    const out = await resolveLinearWriteArming({ enabled: true, secrets, workspaceIds: WORKSPACES, http: h });
+    if (!out.armed) throw new Error("expected armed");
+    const reads = secrets.getSecret.mock.calls.length;
+    expect(await out.gate.linearPeople?.viewer("personal-life")).toEqual({ ok: false, reason: "not_armed_for_workspace" });
+    expect(await out.gate.linearPeople?.findMember("personal-life", "Sam Lee")).toEqual({ ok: false, reason: "not_armed_for_workspace" });
+    expect(h.calls).toHaveLength(0);
+    expect(secrets.getSecret.mock.calls.length).toBe(reads);
+  });
+});

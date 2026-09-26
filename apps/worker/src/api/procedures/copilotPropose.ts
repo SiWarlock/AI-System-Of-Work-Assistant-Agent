@@ -353,6 +353,15 @@ export async function handleCopilotProposeToolCall(
   rawArgs: unknown,
   deps: { readonly workspaceId: WorkspaceId; readonly sink: CopilotProposeSink },
 ): Promise<CopilotProposeToolResult> {
+  // ⛔ CLOSED FOR LINEAR (slice 5b.2). The Linear sender now sends an assignee and a due date from an approved payload,
+  // and this generic tool's payload is model-written — it could carry a raw assignee id or an invented date. Only the
+  // worker's own Linear paths build a Linear payload from resolved values (the form; the Copilot's Linear path, 5b.3).
+  if (isPlainObject(rawArgs)) {
+    const t = rawArgs["targetSystem"];
+    if (typeof t === "string" && t.trim().toLowerCase() === "linear") {
+      return toolText("Could not record the proposal (COPILOT_PROPOSE_LINEAR_USE_LINEAR_PATH). No action was taken.", true);
+    }
+  }
   const r = await proposeCopilotAction({ intent: rawArgs, workspaceId: deps.workspaceId, sink: deps.sink });
   if (isOk(r)) {
     const { approvalRef, created } = r.value;

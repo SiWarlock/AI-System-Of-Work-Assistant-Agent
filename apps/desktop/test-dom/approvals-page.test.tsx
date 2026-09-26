@@ -520,3 +520,16 @@ describe("Approvals — Details shows the WHOLE description", () => {
     expect(screen.queryByText("(more not shown)")).toBeNull();
   });
 });
+
+// Linear slice 5b.2 (owner 2026-09-25): the assignee ("you, or who you name") and an owner-stated due date are sent to
+// Linear, so the owner sees them before approving.
+describe("Approvals — Details shows the assignee and the due date", () => {
+  it("shows who the issue is assigned to and when it is due", async () => {
+    const card = apr("e1", { workspaceId: "employer-work", targetSystem: "linear", subjectKind: "external_action" });
+    const detail = { approvalId: "e1", sendState: "awaiting_approval" as const, targetSystem: "linear" as const, title: "Fix it", assigneeName: "Sam Lee", dueDate: "2026-10-01" };
+    render(<Approvals approvals={[card]} onDecide={async () => "applied" as const} activeWorkspaceId="employer-work" onOpenDetail={async () => ({ ok: true as const, detail })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(await screen.findByText("Assignee: Sam Lee")).toBeTruthy();
+    expect(screen.getByText("Due: 2026-10-01")).toBeTruthy();
+  });
+});

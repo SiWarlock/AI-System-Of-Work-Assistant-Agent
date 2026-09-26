@@ -129,6 +129,7 @@ import {
 } from "./store-adapters";
 import { createLogger, type Logger, type LogSink } from "../observability/logger";
 import type { LinearTeamsRead } from "@sow/integrations/tools/adapters/linear-teams";
+import type { LinearViewerRead, LinearMemberMatch } from "@sow/integrations/tools/adapters/linear-people";
 import { createOperationalBackupPorts } from "../backup/backup-ports";
 import type { OpDbBackupPort, TemporalPersistenceBackupPort } from "../backup/operational-backup";
 import { selectProviderRunner, selectHealthSources, type ProviderTransportGate } from "./provider-runner";
@@ -183,6 +184,20 @@ export interface WriteTransportGate {
    * through {@link linearTeamsLister}, never directly.
    */
   readonly listLinearTeams?: (workspaceId: string) => Promise<LinearTeamsOutcome>;
+  /**
+   * Linear slice 5b.2 — the default assignee (the key's own user) and a member the owner names. Built in the same
+   * ARMED branch as the lister, over the same key. Read through {@link linearPeopleOf}, never directly.
+   */
+  readonly linearPeople?: LinearPeople;
+}
+
+/** The gate's refusal for a workspace whose Linear key did not resolve at boot. */
+type NotArmedForWorkspace = { readonly ok: false; readonly reason: "not_armed_for_workspace" };
+
+/** Linear slice 5b.2 — who a Copilot-proposed Linear issue is assigned to (owner decision 2026-09-25). */
+export interface LinearPeople {
+  readonly viewer: (workspaceId: string) => Promise<LinearViewerRead | NotArmedForWorkspace>;
+  readonly findMember: (workspaceId: string, name: string) => Promise<LinearMemberMatch | NotArmedForWorkspace>;
 }
 
 /** A team read, or the gate's refusal for a workspace whose Linear key did not resolve at boot. */
@@ -849,6 +864,22 @@ export function writeArmedFor(gate?: WriteTransportGate): ArmedFor {
 }
 
 const NOT_ARMED_FOR_TEAMS: LinearTeamsOutcome = { ok: false, reason: "not_armed_for_workspace" };
+const NOT_ARMED: NotArmedForWorkspace = { ok: false, reason: "not_armed_for_workspace" };
+
+/** The refusal-only people reader: closes over nothing, so it cannot reach a network or read a key. */
+const NO_LINEAR_PEOPLE: LinearPeople = {
+  viewer: () => Promise.resolve(NOT_ARMED),
+  findMember: () => Promise.resolve(NOT_ARMED),
+};
+
+/**
+ * The people reader (Linear slice 5b.2): the gate's own ONLY when the gate ARMS ({@link isWriteTransportArmed}) and
+ * supplies one; every other shape refuses both lookups with no network and no key read — the owner's 2026-09-25
+ * decision (no Linear call while writes are off) covers this read too.
+ */
+export function linearPeopleOf(gate?: WriteTransportGate): LinearPeople {
+  return isWriteTransportArmed(gate) && gate?.linearPeople !== undefined ? gate.linearPeople : NO_LINEAR_PEOPLE;
+}
 
 /**
  * The team lister (Linear slice 5a): the gate's own `listLinearTeams` ONLY when the gate ARMS
@@ -928,6 +959,8 @@ export interface ProofSpineBackends {
   readonly armedFor: ArmedFor;
   /** Linear slice 5a — the active workspace's Linear teams ({@link linearTeamsLister}); refuses, with no network, unless armed. */
   readonly listLinearTeams: (workspaceId: string) => Promise<LinearTeamsOutcome>;
+  /** Linear slice 5b.2 — the default assignee and a named member ({@link linearPeopleOf}); refuses, with no network, unless armed. */
+  readonly linearPeople: LinearPeople;
   /** The GBrain index client (deterministic transport). */
   readonly indexClient: IndexApplyClient;
   /** The local-provider config ALWAYS handed to the broker (never undefined). */
@@ -1066,6 +1099,7 @@ export async function assembleBackends(
     writeAdapters,
     armedFor: writeArmedFor(config.writeTransport),
     listLinearTeams: linearTeamsLister(config.writeTransport),
+    linearPeople: linearPeopleOf(config.writeTransport),
     indexClient,
     localConfig,
     now,

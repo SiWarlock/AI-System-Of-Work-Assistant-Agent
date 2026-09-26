@@ -120,6 +120,17 @@ export const LINEAR_DESCRIPTION_MAX = 20_000;
  */
 export const MAX_DETAIL_DESCRIPTION_LINES = LINEAR_DESCRIPTION_MAX / 2;
 
+/**
+ * A real calendar day in `YYYY-MM-DD` form (Linear's TimelessDate) — never a time, never "next friday", never
+ * 2026-02-30. Shared by the Details projector and the Linear sender so the two agree (Linear slice 5b.2). Pure.
+ */
+export function isCalendarDate(v: unknown): v is string {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [y, m, d] = v.split("-").map(Number) as [number, number, number];
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+}
+
 /** Cut one collapsed line into pieces of at most 1024 UTF-16 units, never inside a character. Nothing is dropped. */
 function wrapLine(line: string): string[] {
   const out: string[] = [];
@@ -759,7 +770,8 @@ export type ApprovalSendRefusal = z.infer<typeof approvalSendRefusalSchema>;
  * action's own content, shown to the owner on purpose, so this contract bounds their SHAPE (single lines, enough of
  * them for a whole {@link LINEAR_DESCRIPTION_MAX} description — slice 5b.1, the owner must see all that is sent —
  * no extra keys) — the workspace check is what keeps employer content out of a personal scope. Never carries the
- * payload, a key, a hash, an owner or a date.
+ * payload, a key, a hash or a raw id. (Slice 5b.2: an assignee's NAME and an owner-stated due date are shown — the
+ * owner decided both on 2026-09-25 — and only for a worker-resolved card.)
  */
 export interface UiSafeApprovalDetail {
   approvalId: string;
@@ -778,6 +790,13 @@ export interface UiSafeApprovalDetail {
    * name there could name a different team than the one sent (slice-5a review, rules 2+3). Never the team's id.
    */
   teamName?: string;
+  /**
+   * Linear slice 5b.2 — who the issue is ASSIGNED to, by NAME (owner decision 2026-09-25: "you, or who you name"),
+   * resolved by the worker against the Linear members. Served only for a worker-resolved card, like `teamName`.
+   */
+  assigneeName?: string;
+  /** Linear slice 5b.2 — the due date, only if the owner STATED one (`YYYY-MM-DD`). Served like `assigneeName`. */
+  dueDate?: string;
 }
 
 export const UiSafeApprovalDetailSchema = z
@@ -791,6 +810,8 @@ export const UiSafeApprovalDetailSchema = z
     descriptionTruncated: z.boolean().optional(),
     priority: z.number().int().min(0).max(4).optional(),
     teamName: uiSafeSummaryLine.optional(),
+    assigneeName: uiSafeSummaryLine.optional(),
+    dueDate: z.string().refine(isCalendarDate, { message: "a due date is a real YYYY-MM-DD day" }).optional(),
   })
   .strict();
 
@@ -957,8 +978,10 @@ export const UI_SAFE_ALLOWLIST = {
   taskRollup: ["items"],
   approvalDetail: [
     "approvalId",
+    "assigneeName",
     "descriptionLines",
     "descriptionTruncated",
+    "dueDate",
     "priority",
     "refusal",
     "sendState",

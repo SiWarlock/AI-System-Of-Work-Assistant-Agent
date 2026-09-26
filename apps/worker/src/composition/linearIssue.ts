@@ -25,6 +25,18 @@ import type { ArmedFor, LinearTeamsOutcome } from "./backends";
 /** The actor recorded on a card the owner proposed from the form — never the Copilot's `copilot-agent`. */
 export const LINEAR_FORM_ACTOR = "owner-form";
 
+/**
+ * The actor recorded on a Linear card the COPILOT proposed through the worker's own Linear path (slice 5b.3), which
+ * builds the payload from worker-resolved values only (team, assignee) — unlike the generic propose tool, whose
+ * payload is model-written (`copilot-agent`, closed for Linear since slice 5b.2). Set by the sink's config, never by a
+ * payload. ⚠ No sink uses it until slice 5b.3.
+ */
+export const LINEAR_COPILOT_ACTOR = "copilot-linear";
+
+/** The actors whose Linear payloads the WORKER built from resolved values — the only ones whose team, assignee and
+ *  due date a card's Details may show (rules 2+3: never a model-written name for what is sent). */
+export const LINEAR_RESOLVED_ACTORS: ReadonlySet<string> = new Set([LINEAR_FORM_ACTOR, LINEAR_COPILOT_ACTOR]);
+
 /** The operation label folded into the idempotency key (lowercase dotted, like `todoist.create_task`). */
 export const LINEAR_CREATE_OPERATION = "linear.create_issue";
 

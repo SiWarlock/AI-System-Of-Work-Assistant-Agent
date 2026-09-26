@@ -799,8 +799,10 @@ describe("UiSafeApprovalDetail / UiSafeSendNowResult — Linear slice 3+4", () =
     expect(UiSafeApprovalDetailSchema.safeParse(ok).success).toBe(true);
   });
 
-  it("⛔ never carries the raw payload or any key/hash/owner field — the allowlist is exact", () => {
-    for (const forbidden of ["payload", "payloadHash", "idempotencyKey", "canonicalObjectKey", "writeReceipt", "teamId", "workspaceId", "actor", "assignee", "dueDate"]) {
+  it("⛔ never carries the raw payload or any key/hash/raw id — the allowlist is exact", () => {
+    // Slice 5b.2 (owner 2026-09-25): an assignee's NAME and an owner-stated due date are now shown (see below); the
+    // assignee's raw id, like the team's, never is.
+    for (const forbidden of ["payload", "payloadHash", "idempotencyKey", "canonicalObjectKey", "writeReceipt", "teamId", "workspaceId", "actor", "assignee", "assigneeId"]) {
       expect(UI_SAFE_ALLOWLIST.approvalDetail as readonly string[]).not.toContain(forbidden);
       expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, [forbidden]: "x" }).success).toBe(false); // .strict()
     }
@@ -812,7 +814,7 @@ describe("UiSafeApprovalDetail / UiSafeSendNowResult — Linear slice 3+4", () =
     expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, priority: 1.5 }).success).toBe(false);
   });
 
-  it("rejects a multi-line title, more than 40 description lines, and an unknown send state", () => {
+  it("rejects a multi-line title, more description lines than Details hold, and an unknown send state", () => {
     expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, title: "two\nlines" }).success).toBe(false);
     expect(
       UiSafeApprovalDetailSchema.safeParse({ ...ok, descriptionLines: Array.from({ length: MAX_DETAIL_DESCRIPTION_LINES + 1 }, (_, i) => `l${i}`) }).success,
@@ -922,5 +924,16 @@ describe("the WHOLE description is shown (Linear slice 5b.1)", () => {
     expect(out.lines.every((l) => l.length > 0 && l.length <= 1024)).toBe(true);
     expect(out.lines.join("")).toBe(long);
     expect(UiSafeApprovalDetailSchema.safeParse({ approvalId: "x", sendState: "ready", descriptionLines: out.lines }).success).toBe(true);
+  });
+});
+
+describe("UiSafeApprovalDetail — the assignee's name and the due date (Linear slice 5b.2)", () => {
+  const ok = { approvalId: "idem_abc", sendState: "writes_off", targetSystem: "linear", title: "T" };
+  it("carries the assignee's NAME on one line and a YYYY-MM-DD due date", () => {
+    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, assigneeName: "Sam Lee", dueDate: "2026-10-01" }).success).toBe(true);
+    expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, assigneeName: "two\nlines" }).success).toBe(false);
+    for (const dueDate of ["2026-10-01T09:00:00Z", "next friday", "2026-1-1", ""]) {
+      expect(UiSafeApprovalDetailSchema.safeParse({ ...ok, dueDate }).success, dueDate).toBe(false);
+    }
   });
 });

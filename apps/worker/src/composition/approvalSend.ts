@@ -15,7 +15,7 @@ import type { ApprovalRepository, OutboxRepository, WorkspaceConfigRepository } 
 import type { ApprovalSendPort, ApprovalRefInput, WorkspaceInput } from "../api/procedures/approvalSend";
 import { toUiSafeApproval, toUiSafeApprovalDetail, toUiSafeSendNowResult } from "../api/projections/uiSafe";
 import { checkSavedAction, sendStateOf, type ExternalApprovalSender, type SavedActionCheck } from "./externalApprovalDispatch";
-import { LINEAR_FORM_ACTOR } from "./linearIssue";
+import { LINEAR_RESOLVED_ACTORS } from "./linearIssue";
 
 export interface ApprovalSendPortDeps {
   readonly approvals: ApprovalRepository;
@@ -49,23 +49,33 @@ async function ownCard(deps: ApprovalSendPortDeps, input: ApprovalRefInput): Pro
 /**
  * The action's own content for its details — only for Linear, and only when the saved action is provably this
  * card's (same workspace, same id, and a payload that re-hashes to the approved hash). Linear's write sends
- * `title`, `description`, `priority` and `teamId` (linear-write-spec.ts); the first three are shown, and — for a card
- * the owner's FORM proposed — the team by its NAME (`teamName`, saved from the list the worker read — Linear slice 5a).
- * ⚠ For a card proposed any other way (the Copilot) the team is NOT shown: its payload is model-written, and a raw team
- * id tells the owner nothing (see `contentOf`).
- * Corrected 2026-09-22 (review): this used to claim Linear sends "exactly title and description". Amended 2026-09-25.
+ * `title`, `description`, `priority`, `teamId` and — since slice 5b.2 — `assigneeId` and `dueDate`
+ * (linear-write-spec.ts). The first three are always shown; the team, the assignee (by NAME) and the due date are
+ * shown for a card whose payload the WORKER built from resolved values (`LINEAR_RESOLVED_ACTORS`: the form, and the
+ * Copilot's Linear path). ⚠ For any other card they are NOT shown: its payload is model-written, and a raw id tells
+ * the owner nothing. Corrected 2026-09-22 (review): this used to claim Linear sends "exactly title and description".
+ * Amended 2026-09-25 (slices 5a and 5b.2).
  */
-function contentOf(card: Approval, check: SavedActionCheck): { title?: unknown; description?: unknown; priority?: unknown; teamName?: unknown } {
+function contentOf(
+  card: Approval,
+  check: SavedActionCheck,
+): { title?: unknown; description?: unknown; priority?: unknown; teamName?: unknown; assigneeName?: unknown; dueDate?: unknown } {
   if (check.kind !== "verified" || check.entry.targetSystem !== "linear") return {};
   const payload = check.entry.payload;
   if (typeof payload !== "object" || payload === null) return {};
   const p = payload as Record<string, unknown>;
-  // `teamName` (Linear slice 5a) — ⛔ ONLY for a card the owner's FORM proposed (its actor, set by the worker, not by
-  // any payload). The form saves the name it read from that workspace's Linear next to the team id it sends. Any other
-  // proposer writes the payload itself, so a name there could name a DIFFERENT team than the one sent (rules 2+3,
-  // slice-5a review, measured). The team id is never read here — it is what is sent, not what the owner reads.
-  const fromForm = card.actor === LINEAR_FORM_ACTOR;
-  return { title: p["title"], description: p["description"], priority: p["priority"], ...(fromForm ? { teamName: p["teamName"] } : {}) };
+  // The team, the assignee's NAME and the due date — ⛔ ONLY for a card whose actor (set by the sink's config, never by
+  // a payload) is one of `LINEAR_RESOLVED_ACTORS`: those paths save the names they RESOLVED next to the ids they send.
+  // Any other proposer writes the payload itself, so a name there could name a DIFFERENT team or person than the one
+  // sent (rules 2+3, slice-5a review, measured). The ids are never read here — they are what is sent, not what the
+  // owner reads. (Slice 5a: the form's team; slice 5b.2: the assignee, the due date, and the Copilot's Linear path.)
+  const resolved = LINEAR_RESOLVED_ACTORS.has(String(card.actor));
+  return {
+    title: p["title"],
+    description: p["description"],
+    priority: p["priority"],
+    ...(resolved ? { teamName: p["teamName"], assigneeName: p["assigneeName"], dueDate: p["dueDate"] } : {}),
+  };
 }
 
 export function createApprovalSendPort(deps: ApprovalSendPortDeps): ApprovalSendPort {

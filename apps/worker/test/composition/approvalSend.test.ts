@@ -10,7 +10,7 @@ import { buildApprovalSendRouter, type ApprovalSendPort } from "../../src/api/pr
 import { createCallerFactory, router, type ApiContext } from "../../src/api/trpc";
 import type { AuthedContext } from "../../src/api/auth/sessionAuth";
 import { NOW, WS, OTHER_WS, vendor, backends, propose } from "./_approvalHarness";
-import { LINEAR_FORM_ACTOR } from "../../src/composition/linearIssue";
+import { LINEAR_FORM_ACTOR, LINEAR_COPILOT_ACTOR } from "../../src/composition/linearIssue";
 
 const open: ProofSpineBackends[] = [];
 afterEach(() => {
@@ -135,6 +135,19 @@ describe("review follow-ups (2026-09-22) — the payload sent is the payload app
     expect(JSON.stringify(res)).not.toContain("t-SECRET-ID");
   });
 
+  it("slice 5b.2: a WORKER-RESOLVED card (the form, or the Copilot's Linear path) shows its team, assignee and due date", async () => {
+    const b = await backends(open);
+    for (const actor of [LINEAR_FORM_ACTOR, LINEAR_COPILOT_ACTOR]) {
+      const card = await propose(b, `resolved-${actor}`, {
+        payload: { teamId: "t-1", teamName: "Core", assigneeId: "u-2", assigneeName: "Sam Lee", dueDate: "2026-10-01" },
+        actor,
+      });
+      const res = await portFor(b).detail({ workspaceId: String(WS), approvalId: String(card.id) });
+      expect(res.ok && [res.value.teamName, res.value.assigneeName, res.value.dueDate], actor).toEqual(["Core", "Sam Lee", "2026-10-01"]);
+      expect(JSON.stringify(res)).not.toContain("u-2"); // the assignee's id is sent, not shown
+    }
+  });
+
   it("⛔ rules 2+3 (slice-5a review): a team name on a card the form did NOT propose is never shown", async () => {
     // Only the form's proposer resolves the name from the list it read, next to the team id it sends. Any other
     // proposer (the Copilot) writes the payload itself, so a name there may name a DIFFERENT team than the one sent.
@@ -144,6 +157,13 @@ describe("review follow-ups (2026-09-22) — the payload sent is the payload app
     expect(res.ok).toBe(true);
     expect(res.ok && res.value.teamName).toBeUndefined();
     expect(JSON.stringify(res)).not.toContain("Personal errands");
+  });
+
+  it("⛔ slice 5b.2: nor an assignee name or due date on a card no worker path resolved (the generic Copilot actor)", async () => {
+    const b = await backends(open);
+    const card = await propose(b, "copilot-people", { payload: { assigneeId: "u-9", assigneeName: "Somebody Else", dueDate: "2026-10-01" } });
+    const res = await portFor(b).detail({ workspaceId: String(WS), approvalId: String(card.id) });
+    expect(res.ok && [res.value.assigneeName, res.value.dueDate]).toEqual([undefined, undefined]);
   });
 });
 

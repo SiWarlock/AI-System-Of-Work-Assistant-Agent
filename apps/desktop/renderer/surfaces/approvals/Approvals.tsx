@@ -250,6 +250,9 @@ function DetailsDisclosure({
               {detail.title !== undefined ? <div className="sow-approval-details-title">{detail.title}</div> : null}
               {/* Linear slice 5a — where the issue goes. The worker serves it only for a card the owner's form proposed. */}
               {detail.teamName !== undefined ? <div className="sow-approval-details-meta">Team: {detail.teamName}</div> : null}
+              {/* Slice 5b.2 — who it is assigned to, and when it is due (both are sent to Linear). */}
+              {detail.assigneeName !== undefined ? <div className="sow-approval-details-meta">Assignee: {detail.assigneeName}</div> : null}
+              {detail.dueDate !== undefined ? <div className="sow-approval-details-meta">Due: {detail.dueDate}</div> : null}
               {detail.priority !== undefined ? (
                 <div className="sow-approval-details-meta">Priority: {PRIORITY_LABEL[detail.priority] ?? detail.priority}</div>
               ) : null}

@@ -74,13 +74,28 @@ describe("LINEAR_WRITE_SPEC — wire shape", () => {
     expect(b.variables).toEqual({ input: { id: linearIssueId(WS, COK), teamId: "team_1", title: hostile, description: "Details" } });
   });
 
-  it("⛔ passes NO assignee and NO due date — REQ-F-017 (never invent owners or dates) until a validated source exists", () => {
-    // A payload field is candidate data. Until slice 5 gives owner/date an explicit, validated
-    // origin, the sender drops them rather than risk writing an invented owner into Linear.
-    const b = body(req("create", { teamId: "team_1", title: "T", assigneeId: "user_9", dueDate: "2026-10-01" }));
+  it("sends an assignee and a due date when the APPROVED payload carries well-formed ones (Linear slice 5b.2)", () => {
+    // Owner decision 2026-09-25: the assignee is the owner or a person the owner NAMED (resolved by the worker), and a
+    // due date only if the owner STATED one. Both are validated where they are proposed and shown on the card before
+    // Approve (REQ-F-017 is kept there: nothing is invented). The sender sends what the owner approved.
+    const b = body(req("create", { teamId: "team_1", title: "T", assigneeId: "5f1c9d1e-2b8a-4d53-9b0e-0e6b2f0c7a11", dueDate: "2026-10-01" }));
     const input = b.variables["input"] as Record<string, unknown>;
-    expect(input).not.toHaveProperty("assigneeId");
-    expect(input).not.toHaveProperty("dueDate");
+    expect(input["assigneeId"]).toBe("5f1c9d1e-2b8a-4d53-9b0e-0e6b2f0c7a11");
+    expect(input["dueDate"]).toBe("2026-10-01");
+  });
+
+  it("⛔ drops a malformed assignee or due date rather than send it — a date must be a real YYYY-MM-DD day", () => {
+    for (const [assigneeId, dueDate] of [
+      ["", "2026-13-01"],
+      ["   ", "2026-02-30"],
+      ["x".repeat(65), "next friday"],
+      [`u${String.fromCharCode(10)}1`, "2026-10-01T09:00:00Z"],
+      [7, 20261001],
+    ] as const) {
+      const input = body(req("create", { teamId: "team_1", title: "T", assigneeId, dueDate })).variables["input"] as Record<string, unknown>;
+      expect(input, `${String(assigneeId)} / ${String(dueDate)}`).not.toHaveProperty("assigneeId");
+      expect(input).not.toHaveProperty("dueDate");
+    }
   });
 
   it("updates the issue by its stable id, sending only the fields present", () => {

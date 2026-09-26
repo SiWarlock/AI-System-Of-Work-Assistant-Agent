@@ -27,8 +27,9 @@ import {
 } from "@sow/integrations/tools/adapters/write-http-transport";
 import { LINEAR_WRITE_SPEC } from "@sow/integrations/tools/adapters/linear-write-spec";
 import { createLinearTeamsReader } from "@sow/integrations/tools/adapters/linear-teams";
+import { createLinearPeopleReader } from "@sow/integrations/tools/adapters/linear-people";
 import { createRoutedAdapterTransport } from "@sow/integrations/tools/adapters/routed-transport";
-import type { WriteTransportGate, LinearTeamsOutcome } from "./backends";
+import type { WriteTransportGate, LinearTeamsOutcome, LinearPeople } from "./backends";
 import { WELL_KNOWN_COPILOT_WORKSPACES } from "../api/procedures/copilotClaudeSynthesis";
 
 /** A write that has not answered in this long is abandoned; the gateway then holds it for retry. */
@@ -129,6 +130,14 @@ export async function resolveLinearWriteArming(deps: LinearWriteArmingDeps): Pro
   const readTeams = createLinearTeamsReader({ http: deps.http ?? createFetchHttpTransport(), secrets });
   const listLinearTeams = (workspaceId: string): Promise<LinearTeamsOutcome> =>
     workspaces.includes(workspaceId) ? readTeams(workspaceId) : Promise.resolve({ ok: false, reason: "not_armed_for_workspace" });
+  // Linear slice 5b.2 — who a Copilot-proposed issue is assigned to (owner: "you, or who you name"). Same place, same
+  // key, same refusal for a workspace whose key did not resolve (pinned by the same drift guard, its own row).
+  const people = createLinearPeopleReader({ http: deps.http ?? createFetchHttpTransport(), secrets });
+  const linearPeople: LinearPeople = {
+    viewer: (workspaceId) => (workspaces.includes(workspaceId) ? people.viewer(workspaceId) : Promise.resolve({ ok: false, reason: "not_armed_for_workspace" })),
+    findMember: (workspaceId, name) =>
+      workspaces.includes(workspaceId) ? people.findMember(workspaceId, name) : Promise.resolve({ ok: false, reason: "not_armed_for_workspace" }),
+  };
   return {
     armed: true,
     workspaces,
@@ -145,6 +154,7 @@ export async function resolveLinearWriteArming(deps: LinearWriteArmingDeps): Pro
           linear: createWriteHttpTransport(LINEAR_WRITE_SPEC, { http: deps.http ?? createFetchHttpTransport(), secrets }),
         }),
       listLinearTeams,
+      linearPeople,
     },
   };
 }

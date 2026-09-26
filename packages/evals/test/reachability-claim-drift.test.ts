@@ -187,6 +187,16 @@ const CLAIMS: readonly Claim[] = [
     says: "the Linear team reader is built in exactly one production place — the armed branch of resolveLinearWriteArming",
   },
   {
+    // Added 2026-09-25 (Linear slice 5b.2): the people reader (default assignee + a named member) is the THIRD
+    // production use of the Linear key. Same rule as the team reader: built ONLY in the armed branch, never from
+    // boot's always-present Keychain accessor (which would read the key with writes off).
+    symbol: "createLinearPeopleReader",
+    sites: 2,
+    claimedAt:
+      "packages/integrations/src/tools/adapters/linear-people.ts (header) + apps/worker/src/composition/linearWriteTransport.ts (armed branch only)",
+    says: "the Linear people reader is built in exactly one production place — the armed branch of resolveLinearWriteArming",
+  },
+  {
     // Added 2026-09-22 (Linear slice 3+4): until then the desktop host passed a no-op `dispatchApproval`, so
     // approving an external action sent nothing in every configuration. This pins the real dispatcher's ONE
     // binding (an import + a call in bootWorker), so it cannot be dropped — or bound twice — in silence.

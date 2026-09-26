@@ -159,7 +159,9 @@ export const DROPPED_FIELD_NAMES = {
   healthItem: ["message", "auditRef", "parityReportRef", "factIdentity"],
   workflowRunRef: ["auditRefs"],
   dashboardCard: [] as string[],
-  approvalDetail: ["payload", "teamId", "assigneeId", "dueDate", "workspaceId", "idempotencyKey", "payloadHash"],
+  // `dueDate` left this list in slice 5b.2: an owner-stated, well-formed due date is now SHOWN. The tainted source
+  // below still poisons `dueDate` with a sentinel, which proves a malformed one is DROPPED (the no-sentinel check).
+  approvalDetail: ["payload", "teamId", "assigneeId", "workspaceId", "idempotencyKey", "payloadHash"],
   sendNowResult: ["payload", "workspaceId"],
   linearTeamList: ["workspaceId", "organization", "key"],
   linearProposalResult: ["title", "description", "payload", "teamId", "draft", "idempotencyKey", "workspaceId"],

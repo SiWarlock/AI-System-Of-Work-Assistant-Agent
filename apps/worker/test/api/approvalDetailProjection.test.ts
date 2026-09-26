@@ -1,8 +1,9 @@
 // The UI-safe projection of an approval's details and of a "Send now" result. Linear slice 3+4, step 4c.
 //
-// ⛔ This projector is the ONE place an external action's own content (its title and description) becomes
-// renderer-visible. It copies NAMED fields only — never a spread — so anything else on its source (the raw payload,
-// a team id, an assignee, a due date, a key) cannot ride out. The workspace check that decides WHETHER to serve
+// ⛔ This projector is the ONE place an external action's own content (its title and description — and since slices
+// 5a/5b.2 a resolved team name, assignee name and well-formed due date) becomes renderer-visible. It copies NAMED
+// fields only — never a spread — so anything else on its source (the raw payload, a team or assignee id, a key)
+// cannot ride out. The workspace check that decides WHETHER to serve
 // details at all lives in the port (step 4d); this file pins the SHAPE.
 import { describe, it, expect } from "vitest";
 import type { Approval } from "@sow/contracts";
@@ -45,13 +46,15 @@ describe("toUiSafeApprovalDetail", () => {
     expect(UiSafeApprovalDetailSchema.safeParse(out).success).toBe(true);
   });
 
-  it("⛔ copies only allowlisted names: payload, team, assignee, due date, workspace and keys never cross", () => {
+  it("⛔ copies only allowlisted names: the payload, raw ids, the workspace and keys never cross", () => {
+    // Slice 5b.2 (owner 2026-09-25): a WELL-FORMED due date is now shown (the actor gate that decides whether a card's
+    // due date reaches this projector at all lives in the detail port's `contentOf`). A malformed one is dropped here.
     const tainted = {
       ...base,
       payload: { teamId: "team-SECRET", assigneeId: "user-1" },
       teamId: "team-SECRET",
       assigneeId: "user-1",
-      dueDate: "2026-12-01",
+      dueDate: "2026-12-01 at noon",
       workspaceId: "employer-work",
       idempotencyKey: "idem:x",
       tokenRef: "keychain://connector-write.employer-work/linear",
@@ -189,5 +192,24 @@ describe("toUiSafeLinearProposalResult", () => {
   });
   it("carries no card for an outcome that created none", () => {
     expect(toUiSafeLinearProposalResult({ outcome: "writes_off" })).toEqual({ outcome: "writes_off" });
+  });
+});
+
+describe("toUiSafeApprovalDetail — the assignee's NAME and the due date (Linear slice 5b.2)", () => {
+  const base: ApprovalDetailSource = { approvalId: "idem_abc", sendState: "writes_off", targetSystem: "linear", title: "T" };
+  it("shows the assignee's name on one line, and a real YYYY-MM-DD due date", () => {
+    const out = toUiSafeApprovalDetail({ ...base, assigneeName: `Sam${NL}Lee`, dueDate: "2026-10-01" });
+    expect([out.assigneeName, out.dueDate]).toEqual(["Sam Lee", "2026-10-01"]);
+    expect(UiSafeApprovalDetailSchema.safeParse(out).success).toBe(true);
+  });
+  it("drops a malformed due date and a blank name — never a guess", () => {
+    for (const dueDate of ["2026-02-30", "next friday", "2026-10-01T09:00:00Z", 20261001]) {
+      expect(toUiSafeApprovalDetail({ ...base, dueDate }).dueDate, String(dueDate)).toBeUndefined();
+    }
+    expect(toUiSafeApprovalDetail({ ...base, assigneeName: "   " }).assigneeName).toBeUndefined();
+  });
+  it("⛔ a REFUSED detail carries neither", () => {
+    const out = toUiSafeApprovalDetail({ ...base, sendState: "refused", refusal: "payload_mismatch", assigneeName: "Sam", dueDate: "2026-10-01" });
+    expect([out.assigneeName, out.dueDate]).toEqual([undefined, undefined]);
   });
 });
