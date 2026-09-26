@@ -37,6 +37,22 @@ export const PROPOSE_INPUT_SHAPE = {
   payload: z.record(z.unknown()).describe("The write content the owner will review and approve."),
 } as const;
 
+/** Linear slice 5b.3b — the Copilot's own Linear filing tool, surfaced as `mcp__copilot__propose_linear_issue`. */
+export const COPILOT_PROPOSE_LINEAR_TOOL_NAME = "propose_linear_issue" as const;
+
+/**
+ * The zod RAW SHAPE for `propose_linear_issue` — model-facing ergonomics only (NOT the gate: the worker's strict parse
+ * refuses any key outside these six and re-validates every value). The model supplies CONTENT, never a key or an id.
+ */
+export const PROPOSE_LINEAR_INPUT_SHAPE = {
+  title: z.string().describe("The issue title — one line."),
+  description: z.string().describe("The issue description (Markdown)."),
+  team: z.string().optional().describe("The team EXACTLY as the owner named it. Omit it if they named none: the tool then lists the team names."),
+  assignee: z.string().optional().describe("The person the owner named (name or email). Omit it to assign the owner."),
+  priority: z.number().int().optional().describe("0 none, 1 urgent, 2 high, 3 medium, 4 low — ONLY if the owner stated it."),
+  dueDate: z.string().optional().describe("YYYY-MM-DD — ONLY if the owner stated a due date."),
+} as const;
+
 /** One text block of a tool result (structurally compatible with the SDK's CallToolResult content). */
 export interface CopilotProposeTextBlock {
   readonly type: "text";
@@ -86,15 +102,46 @@ export function buildCopilotProposeToolDefinition(
 }
 
 /**
- * Construct the in-process MCP server exposing `mcp__copilot__propose_action`, delegating to the injected
- * handler. The returned `McpSdkServerConfigWithInstance` drops into the runner's `mcpServers` map alongside
- * the gbrain http server (the transport's `mcpServers` type already admits the sdk-instance variant).
+ * Build the `propose_linear_issue` SDK tool definition over the injected handler (Linear slice 5b.3b). Like
+ * `propose_action`, the args go to the worker handler as `unknown` — the shape is not the gate.
+ */
+export function buildCopilotLinearProposeToolDefinition(
+  handler: CopilotProposeToolHandler,
+): SdkMcpToolDefinition<typeof PROPOSE_LINEAR_INPUT_SHAPE> {
+  return tool(
+    COPILOT_PROPOSE_LINEAR_TOOL_NAME,
+    [
+      "Propose ONE Linear issue for the owner's approval. This NEVER creates the issue — it records a PENDING card the owner must approve first.",
+      "Use it only when the owner explicitly asked you to file an issue.",
+      "Set `team` only to the team the owner named; if they named none, call without it — the answer lists the team names; suggest one and ask the owner to confirm or pick another.",
+      "Set `assignee` only to the person the owner named (by default the owner is assigned).",
+      "Set `priority` and `dueDate` only if the owner stated them — never guess.",
+    ].join(" "),
+    PROPOSE_LINEAR_INPUT_SHAPE,
+    async (args: unknown): Promise<ReturnType<typeof toCallToolResult>> => toCallToolResult(await handler(args)),
+  );
+}
+
+/**
+ * Construct the in-process MCP server exposing `mcp__copilot__propose_action` — and, when a Linear handler is supplied
+ * (slice 5b.3b), `mcp__copilot__propose_linear_issue` beside it — delegating to the injected handlers. The returned
+ * `McpSdkServerConfigWithInstance` drops into the runner's `mcpServers` map (the transport's `mcpServers` type already
+ * admits the sdk-instance variant).
  */
 export function createCopilotProposeMcpServer(
   handler: CopilotProposeToolHandler,
+  linearHandler?: CopilotProposeToolHandler,
 ): McpSdkServerConfigWithInstance {
-  return createSdkMcpServer({
-    name: COPILOT_MCP_SERVER_NAME,
-    tools: [buildCopilotProposeToolDefinition(handler)],
-  });
+  return createSdkMcpServer({ name: COPILOT_MCP_SERVER_NAME, tools: copilotProposeToolDefinitions(handler, linearHandler) });
+}
+
+/** The tools the `copilot` propose server carries: `propose_action`, plus `propose_linear_issue` when its handler is given. */
+export function copilotProposeToolDefinitions(
+  handler: CopilotProposeToolHandler,
+  linearHandler?: CopilotProposeToolHandler,
+): Array<ReturnType<typeof buildCopilotProposeToolDefinition> | ReturnType<typeof buildCopilotLinearProposeToolDefinition>> {
+  return [
+    buildCopilotProposeToolDefinition(handler),
+    ...(linearHandler !== undefined ? [buildCopilotLinearProposeToolDefinition(linearHandler)] : []),
+  ];
 }

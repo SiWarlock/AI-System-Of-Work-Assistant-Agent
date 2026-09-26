@@ -206,6 +206,15 @@ const CLAIMS: readonly Claim[] = [
     says: "bootWorker binds the REAL guarded external-approval dispatcher when the host supplies no override",
   },
   {
+    // Added 2026-09-25 (Linear slice 5b.3b): the Copilot's Linear filing handler. It carries the owner-authorized
+    // rule-6 exception (team NAMES to the model), so it must be reachable from exactly ONE place — the runner's
+    // external-propose grant — and nowhere else (one import + one call).
+    symbol: "handleCopilotLinearProposeToolCall",
+    sites: 2,
+    claimedAt: "apps/worker/src/api/procedures/copilotLinearPropose.ts (header) + apps/worker/src/api/procedures/copilotAgentSynthesis.ts (propose grant)",
+    says: "the Copilot Linear filing handler is registered only inside the runner's propose-granted block",
+  },
+  {
     // Added 2026-09-25 (Linear slice 5a): the Linear issue form's port. Absent from boot, the API mounts the fail-closed
     // UNAVAILABLE port and the form can neither list teams nor propose — silently.
     symbol: "createLinearIssuePort",

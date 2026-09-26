@@ -218,7 +218,7 @@ import {
 } from "./composition/externalApprovalDispatch";
 import { createApprovalSendPort } from "./composition/approvalSend";
 import type { ApprovalSendPort } from "./api/procedures/approvalSend";
-import { createLinearIssuePort, LINEAR_FORM_ACTOR } from "./composition/linearIssue";
+import { createLinearIssuePort, LINEAR_FORM_ACTOR, LINEAR_COPILOT_ACTOR } from "./composition/linearIssue";
 import type { LinearIssuePort } from "./api/procedures/linearIssue";
 import { provisionDevWorkspace, type DevProvisionSpec } from "./composition/provisionDev";
 import { maybeSeedDemoData } from "./composition/demoSeed";
@@ -3764,6 +3764,23 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             outbox: backends.repos.outbox,
             now: backends.now,
           });
+          // Linear slice 5b.3b — the Copilot's own Linear filing deps (DORMANT: propose is behind the whole propose arc).
+          // The backends' arming, team reader and people reader (built only in the armed branch — no Linear call while
+          // writes are off), and a sink recording the `copilot-linear` actor, so the card shows the worker-resolved team,
+          // assignee and due date. Pinned by test/boot/copilotLinearBind.test.ts.
+          const linearProposeDeps = {
+            armedFor: backends.armedFor,
+            listLinearTeams: backends.listLinearTeams,
+            linearPeople: backends.linearPeople,
+            approvals: backends.repos.approvals,
+            sink: createApprovalsProposeSink({
+              approvals: backends.repos.approvals,
+              workspaceConfig: backends.repos.workspaceConfig,
+              outbox: backends.repos.outbox,
+              now: backends.now,
+              actor: LINEAR_COPILOT_ACTOR,
+            }),
+          };
           // §13.10a G4b-3 — the SEMANTIC-write propose deps (dormant behind `copilotProposeKnowledge`). Mirror
           // of the external set above: a §9.8 knowledge sink (records the PENDING card + pending-KMP row) + the
           // G3 MCP server factory + a WS-8 existence probe over the served vault (create-vs-patch at call time;
@@ -3840,6 +3857,7 @@ export async function bootWorker(config: BootConfig): Promise<BootedWorker> {
             getToken: () => tokenProvider.getToken(false),
             proposeSink,
             buildProposeMcpServer: createCopilotProposeMcpServer,
+            linearProposeDeps,
             knowledgeProposeSink,
             buildKnowledgeProposeMcpServer: createCopilotProposeKnowledgeMcpServer,
             knowledgeNoteExists,

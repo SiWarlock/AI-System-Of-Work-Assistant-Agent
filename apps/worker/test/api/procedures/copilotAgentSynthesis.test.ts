@@ -49,6 +49,7 @@ import {
   createClaudeAgentCopilotRunner,
   deriveCopilotContentTrust,
   COPILOT_PROPOSE_MCP_TOOL_NAME,
+  COPILOT_PROPOSE_LINEAR_MCP_TOOL_NAME,
   COPILOT_PROPOSE_KNOWLEDGE_MCP_TOOL_NAME,
   type CopilotAgentRunner,
   type CopilotPromptContext,
@@ -1421,5 +1422,92 @@ describe("createClaudeAgentCopilotRunner — §13.10a propose_knowledge grant (S
     });
     const r = await runner.run(bothJob, prompt);
     expect(isErr(r)).toBe(true); // never reaches the SDK — the shared "copilot" key can carry one propose tool
+  });
+});
+
+// Linear slice 5b.3b — the Copilot's own Linear filing tool on a PROPOSE job. Registered ONLY when the external propose
+// grant fires AND the Linear deps are bound; the handler is bound to the SERVER-BOUND workspace; a propose job gets the
+// propose-mode system prompt (every read-only job keeps today's prompt byte-for-byte).
+describe("createClaudeAgentCopilotRunner — propose_linear_issue (Linear slice 5b.3b)", () => {
+  const proposeJob = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE, { contentTrust: "trusted", proposeEnabled: true });
+  const readOnlyJob = buildCopilotAgentJob("personal-business", RUNTIME_ROUTE);
+  const prompt: CopilotPromptContext = { question: "file an issue about the login bug in Core", context: ctx() };
+  type H = (a: unknown) => Promise<{ content: ReadonlyArray<{ type: "text"; text: string }>; isError?: boolean }>;
+  function server(): { build: (h: H, lh?: H) => { type: "sdk"; name: string; instance: never }; linear: () => H | undefined } {
+    let linear: H | undefined;
+    return {
+      build: (_h, lh) => ((linear = lh), { type: "sdk", name: "copilot", instance: {} as never }),
+      linear: () => linear,
+    };
+  }
+  const noopSink = { record: async () => ok({ approvalRef: "appr-1", created: true }) };
+  function linearDeps(sink: { record: (i: { workspaceId: unknown }) => Promise<unknown> }) {
+    return {
+      armedFor: () => true,
+      listLinearTeams: async () => ({ ok: true as const, teams: [{ id: "t-core", name: "Core" }], hasMore: false }),
+      linearPeople: {
+        viewer: async () => ({ ok: true as const, user: { id: "u-me", name: "Me" } }),
+        findMember: async () => ({ ok: false as const, reason: "not_found" as const }),
+      },
+      approvals: { get: async () => ({ ok: false, error: { code: "not_found", message: "nf" } }) },
+      sink,
+    } as never;
+  }
+  function run(job: typeof proposeJob, over: Record<string, unknown>) {
+    const cap = captureQueryFn({ answer: ["ok"], citations: [] });
+    const runner = createClaudeAgentCopilotRunner({
+      servedWorkspaceId: "personal-business",
+      gbrainMcpUrl: "http://127.0.0.1:8899/mcp",
+      getToken: async () => ok("tok-abc"),
+      queryFn: cap.fn,
+      ...over,
+    });
+    return { cap, done: runner.run(job, prompt) };
+  }
+
+  it("a propose job WITH the Linear deps holds propose_linear_issue, bound to the SERVER-BOUND workspace", async () => {
+    const srv = server();
+    let seen: string | undefined;
+    const sink = { record: async (i: { workspaceId: unknown }) => ((seen = String(i.workspaceId)), ok({ approvalRef: "a", created: true })) };
+    const { cap, done } = run(proposeJob, { proposeSink: noopSink, buildProposeMcpServer: srv.build, linearProposeDeps: linearDeps(sink) });
+    await done;
+    const tools = (cap.seen()?.options ?? {})["allowedTools"] as string[];
+    expect(tools).toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
+    expect(tools).toContain(COPILOT_PROPOSE_LINEAR_MCP_TOOL_NAME);
+    expect(COPILOT_PROPOSE_LINEAR_MCP_TOOL_NAME).toBe("mcp__copilot__propose_linear_issue");
+    const r = await srv.linear()?.({ title: "Fix login", description: "", team: "Core" });
+    expect(r?.isError).toBeUndefined();
+    expect(seen).toBe("personal-business"); // never a model-supplied workspace
+  });
+
+  it("a propose job WITHOUT the Linear deps has propose_action only (fail-closed)", async () => {
+    const srv = server();
+    const { cap, done } = run(proposeJob, { proposeSink: noopSink, buildProposeMcpServer: srv.build });
+    await done;
+    const tools = (cap.seen()?.options ?? {})["allowedTools"] as string[];
+    expect(tools).toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
+    expect(tools).not.toContain(COPILOT_PROPOSE_LINEAR_MCP_TOOL_NAME);
+    expect(srv.linear()).toBeUndefined();
+  });
+
+  it("⛔ a READ-ONLY job never holds it, and keeps today's system prompt exactly", async () => {
+    const srv = server();
+    const { cap, done } = run(readOnlyJob, { proposeSink: noopSink, buildProposeMcpServer: srv.build, linearProposeDeps: linearDeps(noopSink) });
+    await done;
+    const opts = cap.seen()?.options ?? {};
+    expect(opts["allowedTools"]).not.toContain(COPILOT_PROPOSE_LINEAR_MCP_TOOL_NAME);
+    expect(opts["systemPrompt"]).toBe(COPILOT_AGENT_SYSTEM_PROMPT);
+  });
+
+  it("a propose job gets the PROPOSE-MODE prompt: act only when asked; team, assignee, priority and due date only as the owner said", async () => {
+    const srv = server();
+    const { cap, done } = run(proposeJob, { proposeSink: noopSink, buildProposeMcpServer: srv.build, linearProposeDeps: linearDeps(noopSink) });
+    await done;
+    const sp = String((cap.seen()?.options ?? {})["systemPrompt"]);
+    expect(sp).not.toContain("you must never propose a write");
+    expect(sp).toContain("propose_linear_issue");
+    expect(sp).toMatch(/only when the owner explicitly asked/i);
+    expect(sp).toMatch(/priority and dueDate ONLY if the owner stated/i);
+    expect(sp).toMatch(/never guess/i);
   });
 });

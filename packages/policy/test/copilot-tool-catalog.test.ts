@@ -12,10 +12,12 @@ import { isAllow, isDeny } from "../src/decision";
 import {
   COPILOT_READ_TOOLS,
   COPILOT_PROPOSE_TOOL,
+  COPILOT_PROPOSE_LINEAR_TOOL,
   COPILOT_PROPOSE_KNOWLEDGE_TOOL,
   isMutatingCopilotTool,
   copilotReadToolPolicy,
   copilotAgentToolPolicy,
+  copilotAgentToolIds,
   copilotKnowledgeAgentToolIds,
   copilotKnowledgeProposeToolPolicy,
   copilotReadOnlyPolicyIsPure,
@@ -431,6 +433,7 @@ describe("§13.10a — copilot.propose_knowledge (the semantic-write proposing t
     expect(ids).toContain("copilot.propose_knowledge");
     expect(ids).toEqual(expect.arrayContaining(copilotReadToolIds().map(String)));
     expect(ids).not.toContain(String(COPILOT_PROPOSE_TOOL.id)); // no external-write tool smuggled in
+    expect(ids).not.toContain("copilot.propose_linear_issue"); // nor the Linear filing tool (slice 5b.3b)
     const p = copilotKnowledgeProposeToolPolicy();
     expect(p.mode).toBe("scoped_write");
     expect(p.allowsMutating).toBe(true);
@@ -461,6 +464,7 @@ describe("CopilotTier — every catalog entry's governance class is a typed fiel
     ...COPILOT_READ_TOOLS,
     COPILOT_PROPOSE_TOOL,
     COPILOT_PROPOSE_KNOWLEDGE_TOOL,
+    COPILOT_PROPOSE_LINEAR_TOOL,
   ];
 
   it("every_catalog_entry_declares_a_governance_tier", () => {
@@ -502,7 +506,8 @@ describe("CopilotTier — every catalog entry's governance class is a typed fiel
     // pin the EXACT id set, not a count — a count passes when one propose sink is silently swapped for
     // some other mutating tool.
     const mutatingIds = ALL_SPECS.filter((s) => s.mutating).map((s) => String(s.id)).sort();
-    expect(mutatingIds).toEqual(["copilot.propose_action", "copilot.propose_knowledge"]);
+    // Linear slice 5b.3b added the Copilot's own Linear filing tool — a propose-only tool, like the other two.
+    expect(mutatingIds).toEqual(["copilot.propose_action", "copilot.propose_knowledge", "copilot.propose_linear_issue"]);
   });
 
   it("every_mutating_entry_is_tier_4_or_5_and_every_tier_1_entry_is_non_mutating", () => {
@@ -556,5 +561,27 @@ describe("CopilotTier — every catalog entry's governance class is a typed fiel
     const uniqueIds = new Set(idList);
     expect(uniqueIds.size).toBe(idList.length); // no copy-paste duplicate id across the source arrays
     expect(CATALOG.size).toBe(idList.length); // no duplicate id silently shadowed an entry in the real Map
+  });
+});
+
+// Linear slice 5b.3b — the Copilot's own Linear filing tool (`propose_linear_issue`). It only ever PROPOSES (a pending
+// card the owner must approve), but it is write-capable, so it is MUTATING: ING-7 refuses it to any untrusted job.
+describe("copilot.propose_linear_issue — the Copilot's Linear filing tool (slice 5b.3b)", () => {
+  it("is cataloged MUTATING, tier 4, and ING-7 treats it as a write", () => {
+    expect(COPILOT_PROPOSE_LINEAR_TOOL.id).toBe("copilot.propose_linear_issue");
+    expect(COPILOT_PROPOSE_LINEAR_TOOL.mutating).toBe(true);
+    expect(COPILOT_PROPOSE_LINEAR_TOOL.tier).toBe(4);
+    expect(isMutatingCopilotTool(COPILOT_PROPOSE_LINEAR_TOOL.id)).toBe(true);
+    expect(Object.isFrozen(COPILOT_PROPOSE_LINEAR_TOOL)).toBe(true);
+  });
+  it("is in the EXTERNAL propose grant only — never a read-only or a knowledge-propose policy", () => {
+    expect(copilotAgentToolIds().map(String)).toContain("copilot.propose_linear_issue");
+    expect(copilotReadToolIds().map(String)).not.toContain("copilot.propose_linear_issue");
+    expect(copilotKnowledgeAgentToolIds().map(String)).not.toContain("copilot.propose_linear_issue");
+  });
+  it("⛔ ING-7: an UNTRUSTED job holding it is refused", () => {
+    const policy = { mode: "scoped_write" as const, allowedTools: [COPILOT_PROPOSE_LINEAR_TOOL.id], deniedTools: [], allowsMutating: true };
+    const r = admitJob(job(policy, "untrusted"), isMutatingCopilotTool);
+    expect(isDeny(r)).toBe(true);
   });
 });

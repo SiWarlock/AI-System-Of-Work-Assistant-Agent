@@ -160,6 +160,20 @@ export const COPILOT_PROPOSE_TOOL: CopilotToolSpec = Object.freeze({
 });
 
 /**
+ * Linear slice 5b.3b — the Copilot's own LINEAR filing tool (`propose_linear_issue`). Like `propose_action` it only ever
+ * PROPOSES — a pending §9.8 card the owner must approve — but it is write-capable, so it is MUTATING: ING-7 refuses it
+ * to an untrusted job. The worker builds the whole payload from resolved values (team, assignee) and the keys from the
+ * content. ⚠ Its handler carries an OWNER-AUTHORIZED rule-6 exception (2026-09-25): when the owner names no team, the
+ * answer lists the team NAMES so the Copilot can suggest one (see copilotLinearPropose.ts).
+ */
+export const COPILOT_PROPOSE_LINEAR_TOOL: CopilotToolSpec = Object.freeze({
+  id: toolId("copilot.propose_linear_issue"),
+  mutating: true,
+  tier: 4,
+  description: "propose ONE Linear issue for human approval (routes to §9.8 Approvals; never a direct write)",
+});
+
+/**
  * §13.10a — the SEMANTIC-write proposing tool. Routes a Copilot-proposed KnowledgeMutationPlan to §9.8
  * Approvals (NEVER a direct/auto Markdown write — KnowledgeWriter commits it ONLY on owner approval,
  * safety rules 1+2). Like the external propose tool, an UNTRUSTED agent must not be able to propose writes
@@ -179,7 +193,7 @@ export const COPILOT_PROPOSE_KNOWLEDGE_TOOL: CopilotToolSpec = Object.freeze({
 /** The full catalog, keyed by the raw tool id. Exported so a totality test (and the §13.10 gate-(c)
  * catalog-wide governance eval) can enumerate every entry's `tier` without reconstructing the source lists. */
 export const CATALOG: ReadonlyMap<string, CopilotToolSpec> = new Map(
-  [...COPILOT_READ_TOOLS, COPILOT_PROPOSE_TOOL, COPILOT_PROPOSE_KNOWLEDGE_TOOL].map((s) => [s.id as string, s]),
+  [...COPILOT_READ_TOOLS, COPILOT_PROPOSE_TOOL, COPILOT_PROPOSE_KNOWLEDGE_TOOL, COPILOT_PROPOSE_LINEAR_TOOL].map((s) => [s.id as string, s]),
 );
 
 /** The read-only tools' ids — the allow-list for a read-only Copilot job. */
@@ -187,9 +201,10 @@ export function copilotReadToolIds(): ToolId[] {
   return COPILOT_READ_TOOLS.map((s) => s.id);
 }
 
-/** The read tools PLUS the write-proposing tool — a TRUSTED (scoped_write) Copilot job's allow-list. */
+/** The read tools PLUS the write-proposing tools — a TRUSTED (scoped_write) Copilot job's allow-list (the Linear filing
+ *  tool joined in slice 5b.3b; the runner registers it only when its Linear deps are bound). */
 export function copilotAgentToolIds(): ToolId[] {
-  return [...copilotReadToolIds(), COPILOT_PROPOSE_TOOL.id];
+  return [...copilotReadToolIds(), COPILOT_PROPOSE_TOOL.id, COPILOT_PROPOSE_LINEAR_TOOL.id];
 }
 
 // ── §13.10 gate (a) SC4 — the P2 workspace-scoping classification (a SEPARATE additive map) ──────────

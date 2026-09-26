@@ -7,8 +7,12 @@ import { describe, it, expect } from "vitest";
 import {
   COPILOT_MCP_SERVER_NAME,
   PROPOSE_INPUT_SHAPE,
+  PROPOSE_LINEAR_INPUT_SHAPE,
+  COPILOT_PROPOSE_LINEAR_TOOL_NAME,
   buildCopilotProposeToolDefinition,
+  buildCopilotLinearProposeToolDefinition,
   createCopilotProposeMcpServer,
+  copilotProposeToolDefinitions,
   toCallToolResult,
   type CopilotProposeToolHandler,
 } from "../src/runtime/copilot-propose-mcp";
@@ -74,5 +78,33 @@ describe("toCallToolResult — maps the worker's readonly result to a mutable SD
 
     const err = toCallToolResult({ content: [{ type: "text" as const, text: "no" }], isError: true });
     expect(err.isError).toBe(true);
+  });
+});
+
+// Linear slice 5b.3b — the Copilot's own Linear filing tool, `propose_linear_issue`, on the same `copilot` server.
+describe("buildCopilotLinearProposeToolDefinition — the propose_linear_issue tool", () => {
+  it("is named propose_linear_issue, over its own input shape, and says it never sends anything", () => {
+    const def = buildCopilotLinearProposeToolDefinition(okHandler);
+    expect(COPILOT_PROPOSE_LINEAR_TOOL_NAME).toBe("propose_linear_issue");
+    expect(def.name).toBe("propose_linear_issue");
+    expect(def.inputSchema).toBe(PROPOSE_LINEAR_INPUT_SHAPE);
+    expect(Object.keys(PROPOSE_LINEAR_INPUT_SHAPE).sort()).toEqual(["assignee", "description", "dueDate", "priority", "team", "title"]);
+    expect(def.description).toMatch(/owner must approve/i);
+    expect(def.description).toMatch(/only if the owner stated/i);
+  });
+
+  it("forwards the args to the injected handler as-is (the worker re-validates strictly)", async () => {
+    let seen: unknown;
+    const def = buildCopilotLinearProposeToolDefinition(async (a) => ((seen = a), { content: [{ type: "text", text: "ok" }] }));
+    const args = { title: "T", description: "D", team: "Core" };
+    await def.handler(args as never, undefined);
+    expect(seen).toEqual(args);
+  });
+
+  it("the server carries propose_linear_issue ONLY when its handler is given", () => {
+    expect(copilotProposeToolDefinitions(okHandler).map((d) => d.name)).toEqual(["propose_action"]);
+    expect(copilotProposeToolDefinitions(okHandler, okHandler).map((d) => d.name)).toEqual(["propose_action", "propose_linear_issue"]);
+    expect(createCopilotProposeMcpServer(okHandler).name).toBe("copilot");
+    expect(createCopilotProposeMcpServer(okHandler, okHandler).name).toBe("copilot");
   });
 });

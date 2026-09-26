@@ -77,6 +77,7 @@ import {
 import type { CopilotWorkspaceScope, AuditSignal, PolicyDecision } from "@sow/policy";
 import type { AuditPersistPort, CandidateCopilotAnswer, CopilotSynthesisPort, RetrievedContext } from "./copilot";
 import { handleCopilotProposeToolCall } from "./copilotPropose";
+import { handleCopilotLinearProposeToolCall, type CopilotLinearProposeDeps } from "./copilotLinearPropose";
 import type { CopilotProposeSink } from "./copilotPropose";
 // §13.10a G4b-2 — the SEMANTIC-write propose grant (mirror of the propose_action grant above).
 import { handleCopilotProposeKnowledgeToolCall } from "./copilotProposeKnowledgeTool";
@@ -449,12 +450,45 @@ export const COPILOT_AGENT_SYSTEM_PROMPT = [
   '- Reply with the structured object { "answer": string[], "citations": [{ "citationId", "title" }] }.',
 ].join("\n");
 
-/** Build the run's prompt + system prompt from the question + retrieved context. Pure. */
+/**
+ * Linear slice 5b.3b — the system prompt of a job that HOLDS the external propose tools (a trusted, served propose
+ * job). The read-only prompt told every job "you must never propose a write", which a propose job cannot obey. This
+ * one keeps every grounding rule and replaces that line with WHEN and HOW to propose — the owner's 2026-09-25 rules for
+ * Linear: act only when asked; the team, the assignee, the priority and the due date only as the owner said them.
+ */
+export const COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT = [
+  "You are the System of Work Copilot, a governed agent answering a question about ONE workspace. You may also PROPOSE",
+  "an external write, which is NEVER applied by you: it becomes a card the owner must approve first.",
+  "",
+  "Rules:",
+  "- Ground every statement in the supplied passages. Cite each passage you rely on by its exact [citationId]",
+  "  tag, and cite ONLY passages that were supplied to you in this message.",
+  "- Do NOT invent, assume, or infer any fact — an owner, date, status, figure, or name — that the passages",
+  "  or the owner's own words do not state.",
+  "- Propose a write ONLY when the owner explicitly asked you to act (e.g. \"file an issue for this\"). Otherwise answer only.",
+  "- For a Linear issue use propose_linear_issue, never propose_action. Set team only to the team the owner named; if",
+  "  they named none, call it without team — it answers with the team names; suggest one and ask the owner to confirm",
+  "  or pick another. Set assignee only to the person the owner named (the owner is assigned by default).",
+  "- Set priority and dueDate ONLY if the owner stated them. Never guess a priority, a date or a person.",
+  "- You may not create, edit, or delete anything any other way.",
+  "- Never include secrets, credentials, access tokens, or raw file paths in your answer.",
+  '- Reply with the structured object { "answer": string[], "citations": [{ "citationId", "title" }] }.',
+].join("\n");
+
+/**
+ * Build the run's prompt + system prompt from the question + retrieved context. Pure. A job that holds the external
+ * propose tools gets {@link COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT}; every other job keeps
+ * {@link COPILOT_AGENT_SYSTEM_PROMPT} byte-for-byte.
+ */
 export function buildCopilotAgentPrompt(
   question: string,
   context: RetrievedContext,
+  opts: { readonly canProposeExternal?: boolean } = {},
 ): { prompt: string; systemPrompt: string } {
-  return { prompt: buildCopilotUserPrompt(question, context), systemPrompt: COPILOT_AGENT_SYSTEM_PROMPT };
+  return {
+    prompt: buildCopilotUserPrompt(question, context),
+    systemPrompt: opts.canProposeExternal === true ? COPILOT_AGENT_PROPOSE_SYSTEM_PROMPT : COPILOT_AGENT_SYSTEM_PROMPT,
+  };
 }
 
 // ── error fold + output mapping ───────────────────────────────────────────────
@@ -628,7 +662,14 @@ export interface ClaudeAgentCopilotRunnerDeps {
    * injects `createCopilotProposeMcpServer` from @sow/providers — keeps the worker's runtime SDK-construction
    * out of this pure module + unit-testable). Present with `proposeSink` ⇒ propose can be granted.
    */
-  readonly buildProposeMcpServer?: (handler: CopilotProposeToolHandler) => McpServerConfig;
+  readonly buildProposeMcpServer?: (handler: CopilotProposeToolHandler, linearHandler?: CopilotProposeToolHandler) => McpServerConfig;
+  /**
+   * OPTIONAL (Linear slice 5b.3b) the Copilot's own Linear filing deps — boot binds the backends' arming, team reader
+   * and people reader (built only in the armed branch) and an approvals sink with the `copilot-linear` actor. Present
+   * on a job whose external propose grant fires ⇒ the model ALSO holds `propose_linear_issue`, bound to the
+   * SERVER-BOUND workspace. Absent ⇒ never granted (fail-closed).
+   */
+  readonly linearProposeDeps?: Omit<CopilotLinearProposeDeps, "workspaceId">;
   /**
    * §13.10a G4b-2 — the SEMANTIC-write propose deps (mirror of the propose_action set above). ALL FOUR present
    * ⇒ a SERVED trusted+scoped_write `propose_knowledge`-policy job may hold `copilot.propose_knowledge`; any
@@ -694,12 +735,16 @@ export interface ClaudeAgentCopilotRunnerDeps {
 /** The SDK MCP tool name the propose tool is surfaced as (`mcp__copilot__propose_action`). */
 export const COPILOT_PROPOSE_MCP_TOOL_NAME = copilotToolToMcpName(toolId("copilot.propose_action"));
 
+/** Linear slice 5b.3b — the SDK MCP tool name of the Copilot's Linear filing tool (`mcp__copilot__propose_linear_issue`). */
+export const COPILOT_PROPOSE_LINEAR_MCP_TOOL_NAME = copilotToolToMcpName(toolId("copilot.propose_linear_issue"));
+
 /** The SDK MCP tool name the SEMANTIC-write propose tool is surfaced as (`mcp__copilot__propose_knowledge`). */
 export const COPILOT_PROPOSE_KNOWLEDGE_MCP_TOOL_NAME = copilotToolToMcpName(toolId("copilot.propose_knowledge"));
 
 /** The catalog tool ids the runner uses to tell a propose_action job from a propose_knowledge job (its policy grants exactly one). */
 const PROPOSE_ACTION_TOOL_ID = toolId("copilot.propose_action");
 const PROPOSE_KNOWLEDGE_TOOL_ID = toolId("copilot.propose_knowledge");
+const PROPOSE_LINEAR_TOOL_ID = toolId("copilot.propose_linear_issue");
 
 /**
  * The concrete `CopilotAgentRunner`. Which workspaces get the gbrain read tool depends on the mode (parity with
@@ -856,8 +901,16 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
         const workspaceId = job.workspaceId; // SERVER-BOUND (WS-4)
         const handler: CopilotProposeToolHandler = (args: unknown) =>
           handleCopilotProposeToolCall(args, { workspaceId, sink });
-        mcpServers[COPILOT_MCP_SERVER_NAME] = deps.buildProposeMcpServer(handler);
+        // Linear slice 5b.3b — the Copilot's own Linear filing tool, beside propose_action: only when the job's policy
+        // lists it AND its deps are bound. Bound to the SERVER-BOUND workspace, like the handler above.
+        const linearDeps = deps.linearProposeDeps;
+        const linearHandler: CopilotProposeToolHandler | undefined =
+          linearDeps !== undefined && job.toolPolicy.allowedTools.includes(PROPOSE_LINEAR_TOOL_ID)
+            ? (args: unknown) => handleCopilotLinearProposeToolCall(args, { ...linearDeps, workspaceId })
+            : undefined;
+        mcpServers[COPILOT_MCP_SERVER_NAME] = deps.buildProposeMcpServer(handler, linearHandler);
         toolNames.push(COPILOT_PROPOSE_MCP_TOOL_NAME);
+        if (linearHandler !== undefined) toolNames.push(COPILOT_PROPOSE_LINEAR_MCP_TOOL_NAME);
       }
       // §13.10a — SEMANTIC-write propose (propose_knowledge). Mutually exclusive with the block above (a job's
       // policy grants exactly one), so this registers under the SAME `copilot` server key without collision.
@@ -876,7 +929,7 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
       const hasServers = Object.keys(mcpServers).length > 0;
       const transport = createClaudeAgentSdkTransport({
         promptBuilder: (): { prompt: string; systemPrompt: string } =>
-          buildCopilotAgentPrompt(prompt.question, prompt.context),
+          buildCopilotAgentPrompt(prompt.question, prompt.context, { canProposeExternal: proposeActionGranted }),
         outputSchema: COPILOT_OUTPUT_SCHEMA,
         // Empty for a non-served workspace ⇒ `buildCanUseTool([])` denies every tool (deny-all).
         allowedToolNames: toolNames,
