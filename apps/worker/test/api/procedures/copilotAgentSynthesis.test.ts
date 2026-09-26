@@ -1199,7 +1199,8 @@ describe("createClaudeAgentCopilotRunner — the C5.3 propose grant (defense-in-
     expect(opts["allowedTools"]).toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
     expect(opts["allowedTools"]).not.toContain("mcp__gbrain__query");
     // Tier-1 §13.10: the analysis tools are stripped too (C5.4a build-time-trust TOCTOU closure holds as the
-    // read surface grows — a propose job's tool-reachable surface stays == the pre-verified seed).
+    // read surface grows — a propose job reads no store beyond the pre-verified seed; the only other mid-run text is
+    // the owner-authorized Linear team NAMES of propose_linear_issue, rule-6 exception 1, 2026-09-25).
     expect(opts["allowedTools"]).not.toContain("mcp__gbrain__find_contradictions");
     expect(opts["allowedTools"]).not.toContain("mcp__gbrain__find_anomalies");
     expect(opts["allowedTools"]).not.toContain("mcp__gbrain__find_orphans");
@@ -1384,8 +1385,10 @@ describe("createClaudeAgentCopilotRunner — §13.10a propose_knowledge grant (S
     expect(opts["allowedTools"]).not.toContain(COPILOT_PROPOSE_MCP_TOOL_NAME);
     const servers = opts["mcpServers"] as Record<string, unknown>;
     expect(servers["copilot"]).toBeDefined(); // the G3 server registered under the shared name
-    // ⛔ A knowledge-propose job does NOT hold the external propose tools, so it keeps the read-only system prompt
-    // byte-for-byte (review 2026-09-25: this was unpinned — a mutant giving it the external propose prompt survived).
+    // ⛔ A knowledge-propose job must NOT get the EXTERNAL propose prompt (it holds no external tool; review
+    // 2026-09-25: a mutant giving it that prompt survived). ⚠ This pins TODAY's prompt, not a design: the read-only
+    // prompt says "never propose a write", which conflicts with the propose_knowledge tool the job holds — a gap
+    // since §13.10a, dormant while knowledge propose is off, tracked separately (critic 2026-09-25).
     expect(opts["systemPrompt"]).toBe(COPILOT_AGENT_SYSTEM_PROMPT);
   });
 

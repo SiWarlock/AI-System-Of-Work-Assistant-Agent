@@ -60,7 +60,8 @@ describe("propose_linear_issue — the happy path", () => {
     expect(text(r)).toContain("Core Platform");
     // ⛔ Rule 6 (review 2026-09-25): the assignee's Linear NAME is imported content outside the owner's team-names
     // exception, so it never goes back to the model. The card's Details show it to the OWNER.
-    expect(text(r)).toContain("assigned to the owner");
+    // Critic 2026-09-25: the key's user is not always the owner (a bot or shared key), so the text says what is true.
+    expect(text(r)).toContain("assigned to the Linear account this workspace's key belongs to");
     expect(text(r)).not.toContain("Owner Person");
     expect(d.sink.calls).toHaveLength(1);
     const a = d.sink.calls[0]?.action as ProposedAction;
@@ -247,6 +248,9 @@ describe("review of slices 5b.1-5b.3 (2026-09-25)", () => {
     const missing = await handleCopilotLinearProposeToolCall({ ...ISSUE, team: "Zeta" }, d);
     expect(text(missing)).toContain("COPILOT_LINEAR_TEAM_NOT_FOUND");
     expect(text(missing)).toMatch(/only the first 100/);
+    // Critic 2026-09-25: the note must not send the owner to a remedy that cannot work (the form reads the same page).
+    expect(text(missing)).toMatch(/cannot be filed from SoW yet/);
+    expect(text(missing)).not.toMatch(/New Linear issue form/);
     expect(d.sink.calls).toHaveLength(0);
     // A complete list carries no such note.
     expect(text(await handleCopilotLinearProposeToolCall({ title: "T", description: "" }, deps()))).not.toMatch(/only the first/);
@@ -257,5 +261,23 @@ describe("review of slices 5b.1-5b.3 (2026-09-25)", () => {
     const r = await handleCopilotLinearProposeToolCall({ ...ISSUE, description: String.fromCharCode(1).repeat(20000) }, d);
     expect(r.isError).toBeUndefined();
     expect(d.sink.calls).toHaveLength(1);
+  });
+});
+
+describe("critic of the review fixes (2026-09-25)", () => {
+  it("a long listed team name can be named back — the input bound matches the listed name's bound", async () => {
+    const longName = "Platform ".repeat(25).trim(); // 224 characters
+    const d = deps({ listLinearTeams: vi.fn(async () => ({ ok: true as const, teams: [{ id: "t-long", name: longName }], hasMore: false })) });
+    expect(text(await handleCopilotLinearProposeToolCall({ title: "T", description: "" }, d))).toContain(longName);
+    await handleCopilotLinearProposeToolCall({ ...ISSUE, team: longName }, d);
+    expect(d.sink.calls[0]?.action.payload).toMatchObject({ teamId: "t-long" });
+  });
+
+  it("too many members: the refusal gives a way forward — the exact email, or file it and reassign in Linear", async () => {
+    const d = deps({ linearPeople: people({ findMember: vi.fn(async () => ({ ok: false as const, reason: "too_many_members" as const })) }) });
+    const t = text(await handleCopilotLinearProposeToolCall({ ...ISSUE, assignee: "Sam" }, d));
+    expect(t).toContain("COPILOT_LINEAR_ASSIGNEE_TOO_MANY");
+    expect(t).toMatch(/exact email/);
+    expect(t).toMatch(/reassign it in Linear/);
   });
 });

@@ -31,7 +31,9 @@ export const COPILOT_LINEAR_PROPOSE_TOOL_NAME = "propose_linear_issue";
 /** The operation folded into the keys — fixed; never the model's. */
 const OPERATION = "linear.create_issue";
 const MAX_TITLE = 255;
-const MAX_NAME = 200;
+/** The longest team or person name accepted — the same bound as a listed name (`collapseToSummaryLine`), so every
+ *  listed team can be named back (critic 2026-09-25: it was 200, below a listed name's 1,024). */
+const MAX_NAME = 1024;
 /** The most team names one answer lists (the rule-6 exception is bounded). */
 const MAX_LISTED_TEAMS = 100;
 
@@ -101,12 +103,15 @@ function teamNames(teams: readonly { readonly name: string }[], hasMore: boolean
   const names = shown.map((t) => collapseToSummaryLine(t.name)).filter((n) => n.length > 0);
   const partial = hasMore || teams.length > shown.length;
   const note = partial
-    ? ` (This is only the first ${String(shown.length)} of this workspace's teams; the owner can check the exact name or use the New Linear issue form.)`
+    ? ` (This is only the first ${String(shown.length)} of this workspace's teams; a team past them cannot be filed from SoW yet.)`
     : "";
   return names.map((n) => `"${n}"`).join(", ") + note;
 }
 
-/** One name, compared the way it is LISTED: whitespace collapsed (like the list), then case ignored. */
+/**
+ * One name, compared the way it is LISTED: whitespace collapsed (like the list), then case ignored. ⚠ Known limit: two
+ * teams whose names differ only in inner whitespace list the same and are refused as ambiguous (a safe refusal).
+ */
 const norm = (s: string): string => collapseToSummaryLine(s).toLowerCase();
 
 async function readBack(approvals: ApprovalRepository, ref: string): Promise<Approval | undefined> {
@@ -143,8 +148,8 @@ export async function handleCopilotLinearProposeToolCall(rawArgs: unknown, deps:
         `No team was named. This workspace's Linear teams are: ${listed}. Suggest one to the owner and ask them to confirm or pick another, then call ${COPILOT_LINEAR_PROPOSE_TOOL_NAME} again with "team" set to that exact name. `,
       );
     }
-    // ⚠ Known limit: with more teams than one page (`hasMore`), a same-named team past it cannot be seen. Linear team
-    // names are in practice unique, and the card shows the team for the owner to check before Approve.
+    // ⚠ Known limit: only the first page of teams is read (`hasMore`), so a team past it cannot be filed, and a
+    // same-named team past it cannot be seen. The card shows the team for the owner to check before Approve.
     const matches = teams.teams.filter((t) => norm(t.name) === norm(intent.team ?? ""));
     if (matches.length === 0) return refuse("COPILOT_LINEAR_TEAM_NOT_FOUND", `The teams are: ${listed}. `);
     if (matches.length > 1) return refuse("COPILOT_LINEAR_TEAM_AMBIGUOUS", `The teams are: ${listed}. `);
@@ -155,7 +160,12 @@ export async function handleCopilotLinearProposeToolCall(rawArgs: unknown, deps:
       const reason = who.reason;
       if (reason === "not_found") return refuse("COPILOT_LINEAR_ASSIGNEE_NOT_FOUND", "Ask the owner for the person's exact name or email. ");
       if (reason === "ambiguous") return refuse("COPILOT_LINEAR_ASSIGNEE_AMBIGUOUS", "Ask the owner for the person's email. ");
-      if (reason === "too_many_members") return refuse("COPILOT_LINEAR_ASSIGNEE_TOO_MANY", "Ask the owner for the person's exact email. ");
+      if (reason === "too_many_members") {
+        return refuse(
+          "COPILOT_LINEAR_ASSIGNEE_TOO_MANY",
+          "Ask the owner for the person's exact email. If that is refused too, file it without an assignee and tell the owner to reassign it in Linear. ",
+        );
+      }
       if (reason === "not_armed_for_workspace") return refuse("COPILOT_LINEAR_WRITES_OFF", "Linear writes are not on for this workspace. ");
       return refuse("COPILOT_LINEAR_ASSIGNEE_UNAVAILABLE");
     }
@@ -184,7 +194,8 @@ export async function handleCopilotLinearProposeToolCall(rawArgs: unknown, deps:
 
     const { approvalRef, created } = proposed.value;
     // ⛔ Rule 6: the team NAME is inside the owner's exception; the assignee's Linear name is not, so it never goes back.
-    const where = `in team "${collapseToSummaryLine(team.name)}", assigned to ${intent.assignee === undefined ? "the owner" : "the person the owner named"}`;
+    // The key's own user is not always the owner (a bot or shared key), so say what is true (critic 2026-09-25).
+    const where = `in team "${collapseToSummaryLine(team.name)}", assigned to ${intent.assignee === undefined ? "the Linear account this workspace's key belongs to" : "the person the owner named"}`;
     if (created) {
       return {
         content: [

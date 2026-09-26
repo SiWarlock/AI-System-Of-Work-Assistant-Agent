@@ -125,6 +125,28 @@ describe("findMember — the EXACT person the owner named (ignoring case and out
     expect(await createLinearPeopleReader({ http: r2.http, secrets: keychain() }).findMember(WS, "Nobody Here")).toEqual({ ok: false, reason: "too_many_members" });
   });
 
+  it("an exact EMAIL match is used even when the list is unfinished — an email is unique in a Linear org", async () => {
+    // Critic 2026-09-25 (measured): past the cap, even a unique email was refused, and the refusal told the model to
+    // ask for the exact email — a dead end for any org over 1,000 members.
+    const cap = LINEAR_MEMBERS_PAGE * LINEAR_MEMBERS_MAX_PAGES;
+    const many = Array.from({ length: cap + 5 }, (_, i) => ({ id: `u${i}`, name: i === cap + 2 ? "Dana Fox" : i === 3 ? "Dana Fox" : `Person ${i}` }));
+    expect(await createLinearPeopleReader({ http: linear(many).http, secrets: keychain() }).findMember(WS, "U3@x.test")).toEqual({
+      ok: true,
+      user: { id: "u3", name: "Dana Fox" },
+    });
+  });
+
+  it("⛔ an email match wins over a member whose NAME is set to that email — the email is the identity", async () => {
+    const people = [
+      { id: "u-real", name: "Sam Lee", displayName: "sam", email: "sam@corp.test" },
+      { id: "u-fake", name: "sam@corp.test", displayName: "sam@corp.test", email: "fake@corp.test" },
+    ];
+    expect(await createLinearPeopleReader({ http: linear(people).http, secrets: keychain() }).findMember(WS, "sam@corp.test")).toEqual({
+      ok: true,
+      user: { id: "u-real", name: "Sam Lee" },
+    });
+  });
+
   it("⛔ a page that says 'more' but gives no cursor is an INCOMPLETE list — never read as the end", async () => {
     const page = { data: { users: { nodes: [{ id: "u1", name: "Dana Fox", active: true }], pageInfo: { hasNextPage: true, endCursor: null } } } };
     const http: HttpTransport = { send: async () => ({ status: 200, body: JSON.stringify(page) }) };

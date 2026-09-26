@@ -9,7 +9,9 @@
 // The filter input's fields were not confirmed there, so this does not depend on them: it pages the member list, bounded
 // at LINEAR_MEMBERS_MAX_PAGES, reading EVERY page so a same-named member on a later page is still caught. A match is
 // used only when the WHOLE list was read: past the cap (or a page that says "more" with no cursor), a same-named person
-// could be unread, so the answer is `too_many_members` even with one match (review 2026-09-25, measured).
+// could be unread, so the answer is `too_many_members` even with one match (review 2026-09-25, measured). The ONE
+// exception is an exact EMAIL match: an email is unique in a Linear org, so it identifies one person whatever is unread
+// — and it wins over a member whose name or display name merely reads like that email (critic 2026-09-25).
 //
 // ⭐ ONE GUARDED PIPELINE, like the teams reader: `guardedHttpExchange` (SSRF guard, workspace-scoped key read that fails
 // closed, key in the header only, no redirects, positive-2xx gate, parsed body never echoed), with the Linear write
@@ -40,7 +42,8 @@ export interface LinearPeopleReader {
   readonly viewer: (workspaceId: string) => Promise<LinearViewerRead>;
   /**
    * The ONE active member whose full name, display name or email equals `name` (ignoring case and outer spaces) — found
-   * in a list read to its END. Two matches ⇒ `ambiguous`; an unfinished list ⇒ `too_many_members`, even with one match.
+   * in a list read to its END. Two matches ⇒ `ambiguous`; an unfinished list ⇒ `too_many_members`, even with one match
+   * — except an exact EMAIL match, which is unique in the org and is used as soon as it is read.
    */
   readonly findMember: (workspaceId: string, name: string) => Promise<LinearMemberMatch>;
 }
@@ -110,6 +113,7 @@ export function createLinearPeopleReader(deps: WriteHttpTransportDeps): LinearPe
       if (wanted.length === 0) return { ok: false, reason: "not_found" };
       try {
         const found: LinearPerson[] = [];
+        const byEmail: LinearPerson[] = [];
         let after: string | null = null;
         let more = true;
         let incomplete = false;
@@ -121,6 +125,7 @@ export function createLinearPeopleReader(deps: WriteHttpTransportDeps): LinearPe
           for (const n of users.nodes as unknown[]) {
             const u = n as { id?: unknown; name?: unknown; displayName?: unknown; email?: unknown; active?: unknown } | null;
             if (typeof u?.id !== "string" || typeof u.name !== "string" || u.active === false) continue;
+            if (norm(u.email) === wanted) byEmail.push({ id: u.id, name: u.name });
             if ([u.name, u.displayName, u.email].some((f) => norm(f) === wanted)) found.push({ id: u.id, name: u.name });
           }
           const hasNext = users.pageInfo?.hasNextPage === true;
@@ -129,6 +134,8 @@ export function createLinearPeopleReader(deps: WriteHttpTransportDeps): LinearPe
           after = more ? (users.pageInfo?.endCursor as string) : null;
         }
         if (more) incomplete = true; // stopped at the cap with pages left
+        const email = byEmail[0];
+        if (byEmail.length === 1 && email !== undefined) return { ok: true, user: email }; // unique in the org
         if (found.length > 1) return { ok: false, reason: "ambiguous" };
         if (incomplete) return { ok: false, reason: "too_many_members" };
         const only = found[0];

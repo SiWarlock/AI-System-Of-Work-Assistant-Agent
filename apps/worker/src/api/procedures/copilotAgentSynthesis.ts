@@ -253,6 +253,9 @@ export type CopilotAgentCapability = "read_only" | "propose" | "propose_knowledg
  * the ENTIRE tool-reachable content surface is trusted-provenance — derived PER-CONTENT (see
  * `deriveCopilotContentTrust`), enforced by the runner's SEED-ONLY strip. If ANY reachable passage is
  * untrusted-provenance, `contentTrust` MUST be `"untrusted"`, or the ING-7 bypass the C4 review closed re-opens.
+ * ⛔ ONE OWNER-AUTHORIZED EXCEPTION (2026-09-25, rule 6): `propose_linear_issue` may return the workspace's Linear team
+ * NAMES mid-run (names only, one line each, at most 100; the owner's Approve bounds it) — imported text this verdict
+ * does not see, by decision. See ARCHITECTURE.md "Owner-authorized ING-7 exceptions". No OTHER mid-run content.
  */
 export function resolveCopilotAgentCapability(params: {
   readonly contentTrust: CopilotContentTrust;
@@ -276,9 +279,10 @@ export function resolveCopilotAgentCapability(params: {
  *
  * This is sound at BUILD TIME **only because a propose job is SEED-ONLY**: the runner STRIPS the gbrain read
  * tools from a propose-capable job (see `createClaudeAgentCopilotRunner`), so the tool-reachable content
- * surface equals exactly the seed this function inspects — closing the live-read TOCTOU (a propose agent
- * cannot fetch more/untrusted content mid-run). Do NOT grant a propose job the gbrain read tools without
- * moving trust to a read-time hook, or this build-time verdict becomes unsound again.
+ * surface equals the seed this function inspects — closing the live-read TOCTOU (a propose agent cannot fetch
+ * more/untrusted content mid-run) — EXCEPT the owner-authorized team-names answer of `propose_linear_issue` (rule-6
+ * exception 1, 2026-09-25; bounded, and every card still needs the owner's Approve). Do NOT grant a propose job the
+ * gbrain read tools without moving trust to a read-time hook, or this build-time verdict becomes unsound again.
  *
  * NOTE (current reality): the live gbrain retrieval adapters do not yet PROVE KnowledgeWriter authorship, so
  * they leave `provenance` ABSENT (⇒ treated as `unknown`) and this returns `"untrusted"` for every live ask
@@ -825,9 +829,10 @@ export function createClaudeAgentCopilotRunner(deps: ClaudeAgentCopilotRunnerDep
         deps.knowledgeNoteExists !== undefined &&
         deps.knowledgeSourceRef !== undefined;
       // C5.4 — SEED-ONLY PROPOSE SURFACE: a propose-CAPABLE job (trusted + scoped_write) gets NO gbrain read
-      // tools. Its tool-reachable content surface is exactly the pre-verified seed (which
-      // `deriveCopilotContentTrust` already proved all KnowledgeWriter), so it cannot fetch more/untrusted
-      // content mid-run — closing the live-read TOCTOU that would make a build-time trust verdict unsound. This
+      // tools. Its tool-reachable content surface is the pre-verified seed (which `deriveCopilotContentTrust`
+      // already proved all KnowledgeWriter), so it cannot fetch more/untrusted content mid-run — closing the
+      // live-read TOCTOU that would make a build-time trust verdict unsound — EXCEPT the Linear team NAMES that
+      // `propose_linear_issue` may return (the owner's rule-6 exception 1, 2026-09-25; bounded + Approve-gated). This
       // keys on `trustedScopedWrite` (propose-CAPABLE), NOT on the grant firing: if the propose deps are absent
       // the job stays seed-only + tool-less (fail-closed) rather than falling back to holding read tools. Only a
       // NON-propose served job reads gbrain (WS-8: only the served workspace; a non-served workspace is tool-less).
